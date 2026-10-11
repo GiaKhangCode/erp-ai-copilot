@@ -1,0 +1,11 @@
+[project]
+name = "erp-ai-copilot-backend"
+version = "0.1.0"
+description = "ERP AI Copilot MVP Backend"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

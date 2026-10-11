@@ -1,0 +1,6 @@
+-- Initialize PostgreSQL extensions and schemas for ERP AI Copilot
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE SCHEMA IF NOT EXISTS erp;
+CREATE SCHEMA IF NOT EXISTS ai;
