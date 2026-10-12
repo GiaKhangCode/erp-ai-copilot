@@ -75,8 +75,17 @@ erp-ai-copilot/
 │   │   │       ├── product.py      # ProductService
 │   │   │       ├── inventory.py    # InventoryService (available calculation)
 │   │   │       ├── order.py        # SalesOrderService (draft creation, idempotency)
-│   │   │       └── reporting.py    # ReportingService (revenue analytics)
-│   │   ├── ai/                     # LangGraph state, agents, allowlisted tools, prompts
+│   │   ├── ai/                     # LangGraph Agent Orchestrator
+│   │   │   ├── tools/              # Allowlisted ERP Domain Tools & ContextVar
+│   │   │   │   ├── context.py      # Thread-safe UserContext (user_id, user_role, user_name)
+│   │   │   │   ├── erp_tools.py    # Read-only tools & propose_sales_order_draft
+│   │   │   │   └── rag_tool.py     # search_company_knowledge tool
+│   │   │   ├── agents/             # LangGraph State Machine & Intent Router
+│   │   │   │   ├── state.py        # ERPAgentState, IntentClassificationResult, ExtractedEntities
+│   │   │   │   ├── router.py       # IntentRouter (Native Constrained Decoding & Heuristic fallback)
+│   │   │   │   └── graph.py        # StateGraph, Nodes, Edges, MemorySaver Checkpoint
+│   │   │   ├── prompts/            # Agent & Router System Prompts, Guardrails
+│   │   │   └── schemas.py          # ChatRequest, ChatResponse, Conversation DTOs
 │   │   ├── rag/                    # Ingestion, chunking, pgvector embedding, retrieval
 │   │   ├── document_ai/            # Parser EML/PDF, structured extraction
 │   │   └── main.py                 # FastAPI Application Entrypoint & CORS
@@ -182,7 +191,7 @@ Mở trình duyệt truy cập:
 
 ---
 
-## 🌐 5. Danh sách API Endpoints hiện tại (Sprint 1, 2, 3, 4)
+## 🌐 5. Danh sách API Endpoints hiện tại (Sprint 1 đến Sprint 5)
 
 | Module | Method | Endpoint | Mô tả & Ràng buộc |
 |---|---|---|---|
@@ -205,6 +214,10 @@ Mở trình duyệt truy cập:
 | | `DELETE` | `/api/v1/documents/{id}` | Xóa file gốc trên MinIO và CASCADE xóa các vector chunks trong DB |
 | **RAG Retrieval** | `POST` | `/api/v1/rag/search` | **Hybrid Search**: Dense Vector pgvector + Sparse Keyword FTS + RRF kết hợp lọc phân quyền ACL |
 | | `POST` | `/api/v1/rag/ask` | **Grounded Q&A**: Trợ lý hỏi đáp tài liệu thông minh (`gemini-3.5-flash-lite`), trích dẫn nguồn citation, chống hallucination |
+| **AI Chat & Copilot** | `POST` | `/api/v1/chat` | **Hội thoại thông minh với LangGraph Orchestrator**: Định tuyến tự động (ERP Query, RAG Doc QA, Đề xuất đơn hàng nháp HITL, Chitchat). Nạp danh tính JWT tin cậy, lưu vết PostgreSQL `ai.conversations` & `ai.messages` |
+| | `GET` | `/api/v1/conversations` | Danh sách lịch sử các cuộc hội thoại của user hiện tại kèm số lượng tin nhắn |
+| | `GET` | `/api/v1/conversations/{id}` | Chi tiết cuộc hội thoại và toàn bộ lịch sử tin nhắn đa vòng |
+| | `DELETE` | `/api/v1/conversations/{id}` | Xóa cuộc hội thoại và toàn bộ tin nhắn liên quan (CASCADE) |
 
 ---
 
@@ -216,7 +229,12 @@ cd backend
 pytest -v
 ```
 
-Kết quả: **60/60 test cases Passed 100%**:
+Kết quả: **101/101 test cases Passed 100%**:
+- **Agent Orchestrator Integration Tests (6 tests):** Ngữ cảnh đa vòng Multi-turn (`MemorySaver`), Hỏi đáp tài liệu trích dẫn nguồn RAG (`citations`), Đề xuất đơn hàng nháp Human-in-The-Loop giá chuẩn DB (`57,000,000 VND`), Chống Prompt Injection mạo danh lãnh đạo ép chốt đơn, Chặn tiêm lệnh SQL phá hoại DB (`DROP TABLE`), Chống leo thang đặc quyền RBAC (`sales_rep` đòi xem báo cáo doanh thu).
+- **Agent Tools Registry Unit Tests (11 tests):** 7 allowlisted tools, kiểm tra phân quyền RBAC báo cáo doanh thu, validation số lượng đặt hàng, bọc gọi RAG tool, kiểm tra thread-safe `UserContext`.
+- **Intent Classifier Router Unit Tests (10 tests):** Phân loại ý định bằng Gemini Native Constrained Decoding (`response_schema=IntentClassificationResult`), Heuristic fallback an toàn, bóc tách thực thể (`sku`, `warehouse`, `customer`, `quantity`, `items`), SQL injection filter.
+- **LangGraph State Machine Unit Tests (8 tests):** Biên dịch StateGraph, xử lý các nodes, điều hướng conditional edges, synthesizer format đề xuất đơn hàng nháp.
+- **Chat REST API Unit Tests (6 tests):** Đăng ký OpenAPI schema, xác thực JWT, bắt tin nhắn rỗng, vòng đời lưu trữ `ai.conversations` & `ai.messages`, cách ly dữ liệu giữa các users.
 - **ERP Integration Tests (13 tests):** Khách hàng, sản phẩm, tồn kho (`available = on_hand - reserved`), tạo đơn nháp snapshot giá, kiểm tra idempotency, báo cáo doanh thu thực tế UC-02.
 - **RAG End-to-End Retrieval Integration Tests (1 test):** Kiểm thử live trọn vẹn vòng đời: Upload 2 tài liệu (1 nội bộ, 1 bảo mật admin), Hybrid search, cách ly phân quyền ACL (Sales Rep bị chặn không xem được tài liệu Admin), hỏi đáp live Gemini có trích dẫn nguồn chuẩn xác, và từ chối trả lời (Abstention) khi hỏi câu hỏi ngoài phạm vi.
 - **RAG Ingestion Integration Tests (2 tests):** Kiểm tra bảo mật endpoint upload, trọn vẹn vòng đời tài liệu Upload $\to$ MinIO $\to$ pgvector (1536 dims) $\to$ Reindex $\to$ Delete cascade.
@@ -230,6 +248,8 @@ Kết quả: **60/60 test cases Passed 100%**:
 - **RAG Gemini Embedding Tests (5 tests):** Gọi live model `gemini-embedding-2` MRL 1536 dims, batch embedding đa phân trang.
 - **ERP Invariant Unit Tests (1 test):** Bất biến số lượng tồn kho khả dụng.
 
+> 💡 **Lưu ý về Quota Gemini (15 RPM):** Bộ kiểm thử tích hợp Agent Orchestrator đã được trang bị cơ chế pacing tự động (nghỉ 4 giây giữa các lượt và test) kèm exponential backoff retry khi gặp HTTP 429, giúp chạy trơn tru trên cả tài khoản Google AI Studio Free Tier mà không sợ chạm trần giới hạn gọi mô hình.
+
 ---
 
 ## 🗺️ 7. Lộ trình phát triển (16 tuần / 8 Sprints)
@@ -240,8 +260,8 @@ Kết quả: **60/60 test cases Passed 100%**:
 | **S2** | **ERP Core**: Domain Services chia nhỏ, Auth JWT, Idempotency, Báo cáo Doanh thu, CRUD APIs | ✅ **Hoàn thành** |
 | **S3** | **RAG Ingestion**: MinIO Object Storage, Multi-format Parser, Structure-aware Chunker, Gemini Embedding 2, Documents API | ✅ **Hoàn thành** |
 | **S4** | **RAG Retrieval**: Hybrid search (FTS + vector), RRF merge, Gemini Q&A Assistant, trích dẫn citation, phân quyền ACL | ✅ **Hoàn thành** |
-| **S5** | **Agent Orchestrator**: LangGraph state machine, intent routing, tool calling an toàn | ⏳ *Tiếp theo* |
-| **S6** | **Document AI**: Phân tích email/đơn hàng, trích xuất Pydantic DTO, tạo draft order | 📋 Kế hoạch |
+| **S5** | **Agent Orchestrator**: LangGraph state machine, intent routing, tool calling an toàn | ✅ **Hoàn thành** |
+| **S6** | **Document AI**: Phân tích email/đơn hàng, trích xuất Pydantic DTO, tạo draft order | ⏳ *Tiếp theo* |
 | **S7** | **Frontend & HITL**: Next.js Dashboard, Chatbox, Hộp thư phê duyệt Approval Inbox | 📋 Kế hoạch |
 | **S8** | **Hardening & Eval**: Benchmark 200+ test cases, chống prompt injection, demo hoàn chỉnh | 📋 Kế hoạch |
 

@@ -3,6 +3,7 @@ from app.api.v1.erp import router as erp_router
 from app.auth.router import router as auth_router
 from app.api.v1.documents import router as documents_router
 from app.api.v1.rag import router as rag_router
+from app.api.v1.chat import router as chat_router
 
 api_router = APIRouter()
 
@@ -23,4 +24,8 @@ api_router.include_router(documents_router)
 
 # RAG Retrieval & Q&A Assistant endpoints
 api_router.include_router(rag_router)
+
+# AI Chat & Conversation endpoints
+api_router.include_router(chat_router)
+
 

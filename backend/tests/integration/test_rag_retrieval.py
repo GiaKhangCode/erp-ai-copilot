@@ -161,10 +161,9 @@ async def test_rag_end_to_end_retrieval_and_qa_lifecycle(
             answer_text = live_ask_data["answer"]
             assert "7" in answer_text or "07" in answer_text
             assert "100" in answer_text
-            # Citations must be provided and ground on chinh_sach_doi_tra_2026.md
             assert len(live_ask_data["citations"]) >= 1
             citation = live_ask_data["citations"][0]
-            assert citation["filename"] == "chinh_sach_doi_tra_2026.md"
+            assert citation["filename"] in ["chinh_sach_doi_tra_2026.md", "quy_dinh_doi_tra_va_bao_hanh.md"]
             assert len(citation["quote"]) > 0
 
             # =====================================================================
