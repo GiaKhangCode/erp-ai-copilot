@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # Customer schemas
@@ -15,9 +15,7 @@ class CustomerBase(BaseModel):
 
 class CustomerResponse(CustomerBase):
     id: UUID
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Product schemas
@@ -30,9 +28,7 @@ class ProductBase(BaseModel):
 
 class ProductResponse(ProductBase):
     id: UUID
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Inventory schemas
@@ -67,9 +63,7 @@ class OrderItemResponse(BaseModel):
     quantity: int
     unit_price: Decimal
     line_total: Decimal
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OrderResponse(BaseModel):
@@ -80,6 +74,40 @@ class OrderResponse(BaseModel):
     total_amount: Decimal
     created_at: datetime
     items: List[OrderItemResponse] = []
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+
+# User & Auth Schemas
+class UserResponse(BaseModel):
+    id: UUID
+    email: str
+    full_name: str
+    role: str
+    is_active: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+
+# Reporting Schemas
+class RevenueReportItem(BaseModel):
+    period: str
+    order_count: int
+    total_revenue: Decimal
+
+
+class RevenueReportResponse(BaseModel):
+    metric_id: str = "revenue_summary"
+    period: Optional[str] = None
+    total_revenue: Decimal
+    total_orders: int
+    breakdown: List[RevenueReportItem] = []
