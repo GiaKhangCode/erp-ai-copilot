@@ -182,7 +182,7 @@ Mở trình duyệt truy cập:
 
 ---
 
-## 🌐 5. Danh sách API Endpoints hiện tại (Sprint 1, 2, 3)
+## 🌐 5. Danh sách API Endpoints hiện tại (Sprint 1, 2, 3, 4)
 
 | Module | Method | Endpoint | Mô tả & Ràng buộc |
 |---|---|---|---|
@@ -203,6 +203,8 @@ Mở trình duyệt truy cập:
 | | `GET` | `/api/v1/documents/{id}/download-url` | Tạo Presigned URL có chữ ký bảo mật để tải/xem file gốc từ MinIO |
 | | `POST` | `/api/v1/documents/{id}/reindex` | Lập chỉ mục lại tài liệu (tăng version, xóa chunks cũ, re-embed) |
 | | `DELETE` | `/api/v1/documents/{id}` | Xóa file gốc trên MinIO và CASCADE xóa các vector chunks trong DB |
+| **RAG Retrieval** | `POST` | `/api/v1/rag/search` | **Hybrid Search**: Dense Vector pgvector + Sparse Keyword FTS + RRF kết hợp lọc phân quyền ACL |
+| | `POST` | `/api/v1/rag/ask` | **Grounded Q&A**: Trợ lý hỏi đáp tài liệu thông minh (`gemini-3.5-flash-lite`), trích dẫn nguồn citation, chống hallucination |
 
 ---
 
@@ -214,9 +216,14 @@ cd backend
 pytest -v
 ```
 
-Kết quả: **38/38 test cases Passed 100%**:
+Kết quả: **60/60 test cases Passed 100%**:
 - **ERP Integration Tests (13 tests):** Khách hàng, sản phẩm, tồn kho (`available = on_hand - reserved`), tạo đơn nháp snapshot giá, kiểm tra idempotency, báo cáo doanh thu thực tế UC-02.
+- **RAG End-to-End Retrieval Integration Tests (1 test):** Kiểm thử live trọn vẹn vòng đời: Upload 2 tài liệu (1 nội bộ, 1 bảo mật admin), Hybrid search, cách ly phân quyền ACL (Sales Rep bị chặn không xem được tài liệu Admin), hỏi đáp live Gemini có trích dẫn nguồn chuẩn xác, và từ chối trả lời (Abstention) khi hỏi câu hỏi ngoài phạm vi.
 - **RAG Ingestion Integration Tests (2 tests):** Kiểm tra bảo mật endpoint upload, trọn vẹn vòng đời tài liệu Upload $\to$ MinIO $\to$ pgvector (1536 dims) $\to$ Reindex $\to$ Delete cascade.
+- **RAG REST API Tests (3 tests):** Kiểm tra OpenAPI schema đăng ký endpoint `/rag/search`, `/rag/ask` và xử lý request/response DTO.
+- **RAG Q&A Domain Service Tests (6 tests):** Short-circuit abstention khi context rỗng, lọc bỏ trích dẫn giả mạo (hallucinated citations), cơ chế retry và degraded fallback.
+- **RAG Prompt Engineering & Grounding Tests (8 tests):** Bất biến bảo mật Prompt Injection, định dạng context `<context>`, parse JSON/markdown code blocks, fallback an toàn.
+- **RAG Hybrid Retrieval Unit Tests (4 tests):** Toán học Reciprocal Rank Fusion (RRF $k=60$), bộ lọc phân quyền Admin/Anonymous/Sales Rep.
 - **RAG Storage Tests (6 tests):** Sanitize tên file tiếng Việt/Unicode, tính mã băm SHA-256, vòng đời Local Disk & MinIO S3 Container.
 - **RAG Multi-format Parser Tests (6 tests):** Bóc tách text/metadata từ file PDF (`pypdf`), file Word (`python-docx`) bảo toàn bảng biểu Markdown, file Markdown `#` và text thuần.
 - **RAG Structure-Aware Chunker Tests (5 tests):** Cắt đoạn đệ quy theo đoạn văn/câu, bảo toàn nguyên khối Header bảng Markdown, gắn metadata phân quyền ACL & số trang.
@@ -232,8 +239,8 @@ Kết quả: **38/38 test cases Passed 100%**:
 | **S1** | **Foundation**: Hạ tầng Docker (PostgreSQL pgvector, MinIO S3), Schema DB, Seed Data, Skeleton API | ✅ **Hoàn thành** |
 | **S2** | **ERP Core**: Domain Services chia nhỏ, Auth JWT, Idempotency, Báo cáo Doanh thu, CRUD APIs | ✅ **Hoàn thành** |
 | **S3** | **RAG Ingestion**: MinIO Object Storage, Multi-format Parser, Structure-aware Chunker, Gemini Embedding 2, Documents API | ✅ **Hoàn thành** |
-| **S4** | **RAG Retrieval**: Hybrid search (FTS + vector), rerank, trích dẫn citation, phân quyền ACL | ⏳ *Tiếp theo* |
-| **S5** | **Agent Orchestrator**: LangGraph state machine, intent routing, tool calling an toàn | 📋 Kế hoạch |
+| **S4** | **RAG Retrieval**: Hybrid search (FTS + vector), RRF merge, Gemini Q&A Assistant, trích dẫn citation, phân quyền ACL | ✅ **Hoàn thành** |
+| **S5** | **Agent Orchestrator**: LangGraph state machine, intent routing, tool calling an toàn | ⏳ *Tiếp theo* |
 | **S6** | **Document AI**: Phân tích email/đơn hàng, trích xuất Pydantic DTO, tạo draft order | 📋 Kế hoạch |
 | **S7** | **Frontend & HITL**: Next.js Dashboard, Chatbox, Hộp thư phê duyệt Approval Inbox | 📋 Kế hoạch |
 | **S8** | **Hardening & Eval**: Benchmark 200+ test cases, chống prompt injection, demo hoàn chỉnh | 📋 Kế hoạch |

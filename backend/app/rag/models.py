@@ -8,7 +8,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     UniqueConstraint,
+    Index,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -18,7 +20,11 @@ from app.db.base import Base
 
 class Document(Base):
     __tablename__ = "documents"
-    __table_args__ = {"schema": "ai"}
+    __table_args__ = (
+        Index("idx_documents_access_scope", "access_scope"),
+        Index("idx_documents_owner_id", "owner_id"),
+        {"schema": "ai"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     filename: Mapped[str] = mapped_column(Text, nullable=False)
@@ -42,6 +48,17 @@ class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     __table_args__ = (
         UniqueConstraint("document_id", "chunk_index", name="uq_doc_chunk_index"),
+        Index(
+            "idx_document_chunks_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "idx_document_chunks_fts",
+            text("to_tsvector('simple', content)"),
+            postgresql_using="gin",
+        ),
         {"schema": "ai"},
     )
 

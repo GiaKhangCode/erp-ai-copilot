@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel, ConfigDict
 
 
@@ -39,3 +39,41 @@ class DocumentListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class Citation(BaseModel):
+    """Citation linking an answer claim to an exact source document and chunk."""
+    document_id: uuid.UUID
+    filename: str
+    chunk_id: uuid.UUID
+    page_number: Optional[int] = None
+    chunk_index: int
+    quote: str = ""
+
+
+class GroundedAnswer(BaseModel):
+    """Structured response contract for Grounded RAG Q&A with citations and abstention flag."""
+    answer: str
+    citations: List[Citation] = []
+    has_sufficient_context: bool = True
+    confidence_score: float = 1.0
+    suggested_followups: List[str] = []
+
+
+class RAGSearchRequest(BaseModel):
+    """Request payload for hybrid search endpoint."""
+    query: str
+    top_k: int = 5
+
+
+class RAGAskRequest(BaseModel):
+    """Request payload for RAG Q&A endpoint."""
+    query: str
+    top_k: int = 5
+
+
+class RAGSearchResponse(BaseModel):
+    """Response payload for hybrid search endpoint."""
+    query: str
+    total_retrieved: int
+    chunks: List[Any] = []

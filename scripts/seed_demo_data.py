@@ -35,6 +35,33 @@ async def seed_data():
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS erp;"))
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai;"))
         await conn.run_sync(Base.metadata.create_all)
+
+        # Ensure RAG specific vector and full-text indexes exist
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding "
+                "ON ai.document_chunks USING hnsw (embedding vector_cosine_ops);"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_document_chunks_fts "
+                "ON ai.document_chunks USING gin (to_tsvector('simple', content));"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_documents_access_scope "
+                "ON ai.documents (access_scope);"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_documents_owner_id "
+                "ON ai.documents (owner_id);"
+            )
+        )
+
         await conn.execute(
             text(
                 "TRUNCATE erp.sales_order_items, erp.sales_orders, erp.inventory, "
