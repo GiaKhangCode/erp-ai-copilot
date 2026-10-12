@@ -79,8 +79,13 @@ class Settings(BaseSettings):
     # ==========================================
     # 5. File & Object Storage Configuration
     # ==========================================
-    STORAGE_TYPE: Literal["local", "s3"] = "local"
+    STORAGE_TYPE: Literal["local", "s3"] = "s3"
     STORAGE_LOCAL_DIR: Path = Path("./data/uploads")
+    S3_ENDPOINT_URL: Optional[str] = "http://localhost:9000"
+    S3_ACCESS_KEY: Optional[str] = "minioadmin"
+    S3_SECRET_KEY: Optional[str] = "minioadmin"
+    S3_BUCKET_NAME: str = "erp-documents"
+    S3_REGION: str = "us-east-1"
 
     # ==========================================
     # 6. Observability & Tracing (Langfuse)

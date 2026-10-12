@@ -8,6 +8,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16_pgvector-4169E1?style=flat&logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
 [![Google Gemini](https://img.shields.io/badge/LLM-Gemini_3.5_Flash_Lite-4285F4?style=flat&logo=google&logoColor=white)](https://ai.google.dev/)
 [![Embedding](https://img.shields.io/badge/Embedding-Gemini_Embedding_2-4285F4?style=flat&logo=google&logoColor=white)](https://ai.google.dev/)
+[![Storage](https://img.shields.io/badge/Object_Storage-MinIO_S3-C72C48?style=flat&logo=minio&logoColor=white)](https://min.io/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Orchestrator-FF6F00?style=flat)](https://docs.langchain.com/oss/python/langgraph/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
 
@@ -181,7 +182,7 @@ Mở trình duyệt truy cập:
 
 ---
 
-## 🌐 5. Danh sách API Endpoints hiện tại (Sprint 2)
+## 🌐 5. Danh sách API Endpoints hiện tại (Sprint 1, 2, 3)
 
 | Module | Method | Endpoint | Mô tả & Ràng buộc |
 |---|---|---|---|
@@ -196,6 +197,12 @@ Mở trình duyệt truy cập:
 | | `GET` | `/api/v1/sales-orders/{id}` | Chi tiết đơn hàng và các dòng sản phẩm |
 | | `POST` | `/api/v1/sales-orders/drafts` | **Tạo đơn nháp**: Server snapshot giá, tính tiền trong transaction, hỗ trợ header `Idempotency-Key` |
 | **Reporting** | `GET` | `/api/v1/reporting/revenue` | Báo cáo doanh thu theo kỳ/tháng thực tế từ DB (UC-02) |
+| **RAG Documents** | `POST` | `/api/v1/documents/upload` | **Upload & Index**: Multipart upload lên MinIO, parse (PDF/DOCX/TXT), chunk + ACL, vector hóa `gemini-embedding-2` (1536 dims) vào pgvector |
+| | `GET` | `/api/v1/documents` | Danh sách tài liệu (phân trang, lọc theo status, access_scope) |
+| | `GET` | `/api/v1/documents/{id}` | Chi tiết tài liệu và danh sách metadata các vector chunks |
+| | `GET` | `/api/v1/documents/{id}/download-url` | Tạo Presigned URL có chữ ký bảo mật để tải/xem file gốc từ MinIO |
+| | `POST` | `/api/v1/documents/{id}/reindex` | Lập chỉ mục lại tài liệu (tăng version, xóa chunks cũ, re-embed) |
+| | `DELETE` | `/api/v1/documents/{id}` | Xóa file gốc trên MinIO và CASCADE xóa các vector chunks trong DB |
 
 ---
 
@@ -207,17 +214,14 @@ cd backend
 pytest -v
 ```
 
-Kết quả: **14/14 test cases Passed 100%**:
-- `test_get_customers_list` & `test_get_customer_detail_found` & `not_found`
-- `test_get_products_list_and_detail`
-- `test_get_inventory_by_sku`
-- `test_create_sales_order_draft_success` (Snapshot giá & tính tổng tiền tự động)
-- `test_create_sales_order_draft_unknown_sku` (Bắt lỗi 404)
-- `test_create_sales_order_draft_zero_quantity` (Bắt lỗi 422)
-- `test_auth_login_success` & `test_auth_login_invalid_password` & `test_auth_me_authenticated`
-- `test_reporting_revenue_summary` (Doanh thu thực tế)
-- `test_create_order_draft_idempotency` (Chống tạo đơn trùng khi retry)
-- `test_inventory_available_calculation` (Logic tồn kho)
+Kết quả: **38/38 test cases Passed 100%**:
+- **ERP Integration Tests (13 tests):** Khách hàng, sản phẩm, tồn kho (`available = on_hand - reserved`), tạo đơn nháp snapshot giá, kiểm tra idempotency, báo cáo doanh thu thực tế UC-02.
+- **RAG Ingestion Integration Tests (2 tests):** Kiểm tra bảo mật endpoint upload, trọn vẹn vòng đời tài liệu Upload $\to$ MinIO $\to$ pgvector (1536 dims) $\to$ Reindex $\to$ Delete cascade.
+- **RAG Storage Tests (6 tests):** Sanitize tên file tiếng Việt/Unicode, tính mã băm SHA-256, vòng đời Local Disk & MinIO S3 Container.
+- **RAG Multi-format Parser Tests (6 tests):** Bóc tách text/metadata từ file PDF (`pypdf`), file Word (`python-docx`) bảo toàn bảng biểu Markdown, file Markdown `#` và text thuần.
+- **RAG Structure-Aware Chunker Tests (5 tests):** Cắt đoạn đệ quy theo đoạn văn/câu, bảo toàn nguyên khối Header bảng Markdown, gắn metadata phân quyền ACL & số trang.
+- **RAG Gemini Embedding Tests (5 tests):** Gọi live model `gemini-embedding-2` MRL 1536 dims, batch embedding đa phân trang.
+- **ERP Invariant Unit Tests (1 test):** Bất biến số lượng tồn kho khả dụng.
 
 ---
 
@@ -225,10 +229,10 @@ Kết quả: **14/14 test cases Passed 100%**:
 
 | Sprint | Nội dung trọng tâm | Trạng thái |
 |:---:|:---|:---:|
-| **S1** | **Foundation**: Hạ tầng Docker, Schema PostgreSQL pgvector, Seed Data, Skeleton API | ✅ **Hoàn thành** |
+| **S1** | **Foundation**: Hạ tầng Docker (PostgreSQL pgvector, MinIO S3), Schema DB, Seed Data, Skeleton API | ✅ **Hoàn thành** |
 | **S2** | **ERP Core**: Domain Services chia nhỏ, Auth JWT, Idempotency, Báo cáo Doanh thu, CRUD APIs | ✅ **Hoàn thành** |
-| **S3** | **RAG Ingestion**: Upload tài liệu, trích xuất text/table, semantic chunking, vector embedding | ⏳ *Tiếp theo* |
-| **S4** | **RAG Retrieval**: Hybrid search (FTS + vector), rerank, trích dẫn citation, phân quyền ACL | 📋 Kế hoạch |
+| **S3** | **RAG Ingestion**: MinIO Object Storage, Multi-format Parser, Structure-aware Chunker, Gemini Embedding 2, Documents API | ✅ **Hoàn thành** |
+| **S4** | **RAG Retrieval**: Hybrid search (FTS + vector), rerank, trích dẫn citation, phân quyền ACL | ⏳ *Tiếp theo* |
 | **S5** | **Agent Orchestrator**: LangGraph state machine, intent routing, tool calling an toàn | 📋 Kế hoạch |
 | **S6** | **Document AI**: Phân tích email/đơn hàng, trích xuất Pydantic DTO, tạo draft order | 📋 Kế hoạch |
 | **S7** | **Frontend & HITL**: Next.js Dashboard, Chatbox, Hộp thư phê duyệt Approval Inbox | 📋 Kế hoạch |

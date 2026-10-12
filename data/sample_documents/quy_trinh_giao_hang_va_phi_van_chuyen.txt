@@ -1,0 +1,15 @@
+QUY TRÌNH GIAO HÀNG VÀ CHÍNH SÁCH CƯỚC PHÍ VẬN CHUYỂN NĂM 2026
+
+1. Thời gian giao hàng tiêu chuẩn:
+- Khu vực nội thành Hà Nội và TP. Hồ Chí Minh: Giao hàng trong vòng 24 giờ kể từ thời điểm đơn hàng được phê duyệt trên hệ thống ERP.
+- Khu vực ngoại thành: Giao hàng trong vòng 48 giờ.
+- Các tỉnh thành khác: Giao hàng trong vòng 3 đến 5 ngày làm việc thông qua đối tác logistics vận chuyển đường bộ.
+
+2. Chính sách cước phí vận chuyển:
+- Đơn hàng có tổng giá trị từ 5.000.000 VNĐ trở lên: Miễn phí vận chuyển 100% đến chân công trình hoặc kho của khách hàng.
+- Đơn hàng dưới 5.000.000 VNĐ trong nội thành: Cước phí đồng giá 150.000 VNĐ / chuyến.
+- Đơn hàng dưới 5.000.000 VNĐ ngoại tỉnh: Tính theo biểu phí thực tế của nhà xe hoặc đơn vị vận chuyển bên thứ ba.
+
+3. Trách nhiệm kiểm tra khi nhận hàng:
+- Khách hàng có trách nhiệm đồng kiểm số lượng kiện hàng, kiểm tra tem niêm phong và ngoại quan sản phẩm trước khi ký biên bản giao nhận hàng.
+- Nếu phát hiện hàng bị móp méo, trầy xước trong quá trình vận chuyển, khách hàng ghi chú trực tiếp vào biên bản và thông báo ngay cho bộ phận CSKH ERP.
