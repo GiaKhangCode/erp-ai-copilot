@@ -74,3 +74,17 @@ async def get_optional_current_user(
         return await get_current_user(credentials, db)
     except AppException:
         return None
+
+
+def require_role(allowed_roles: list[str]):
+    """Dependency kiểm tra quyền hạn (RBAC) của người dùng hiện tại."""
+    async def role_checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed_roles:
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                code="FORBIDDEN",
+                message=f"Chỉ người dùng có vai trò {allowed_roles} mới được phép thực hiện hành động này.",
+            )
+        return current_user
+
+    return role_checker

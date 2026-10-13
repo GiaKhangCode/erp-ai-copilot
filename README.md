@@ -218,6 +218,13 @@ Mở trình duyệt truy cập:
 | | `GET` | `/api/v1/conversations` | Danh sách lịch sử các cuộc hội thoại của user hiện tại kèm số lượng tin nhắn |
 | | `GET` | `/api/v1/conversations/{id}` | Chi tiết cuộc hội thoại và toàn bộ lịch sử tin nhắn đa vòng |
 | | `DELETE` | `/api/v1/conversations/{id}` | Xóa cuộc hội thoại và toàn bộ tin nhắn liên quan (CASCADE) |
+| **Document AI & Orders** | `POST` | `/api/v1/orders/ingest-text` | **Text-to-Draft**: Nhận văn bản email đặt hàng trực tiếp, bóc tách thực thể, đối chiếu ERP và tạo đơn nháp |
+| | `POST` | `/api/v1/orders/ingest-email` | **Email-to-Order (.eml)**: Bóc tách RFC 822 MIME email kèm file đính kèm (PDF, DOCX, TXT) tạo đơn nháp |
+| | `POST` | `/api/v1/orders/ingest-document` | **PO Document Parsing**: Nhận file PDF/DOCX đơn hàng độc lập để trích xuất và đưa vào phê duyệt |
+| **Approval Inbox (HITL)** | `GET` | `/api/v1/approvals` | Danh sách các yêu cầu chờ duyệt trong hệ thống (lọc pending, approved, rejected) |
+| | `GET` | `/api/v1/approvals/{id}` | Chi tiết yêu cầu phê duyệt kèm payload diff và danh sách mặt hàng |
+| | `POST` | `/api/v1/approvals/{id}/approve` | **Phê duyệt đơn hàng**: Chuyển trạng thái sang `confirmed`, giữ tồn kho khả dụng (RBAC: `admin`, `sales_manager`) |
+| | `POST` | `/api/v1/approvals/{id}/reject` | **Từ chối đơn hàng**: Chuyển đơn sang `cancelled` kèm lý do từ chối (RBAC: `admin`, `sales_manager`) |
 
 ---
 
@@ -229,7 +236,12 @@ cd backend
 pytest -v
 ```
 
-Kết quả: **101/101 test cases Passed 100%**:
+Kết quả: **123/123 test cases Passed 100%**:
+- **Document AI & Approval Integration Tests (4 tests):** Vòng đời file email `.eml` kèm attachment $\to$ bóc tách $\to$ tạo draft $\to$ phê duyệt; Xử lý lệch giá tài liệu vs giá niêm yết DB (`price_mismatch`); Chống Prompt Injection mạo danh lãnh đạo ép chốt đơn; Chặn SQL Injection trong email đặt hàng.
+- **Document AI Parsers Unit Tests (6 tests):** Bóc tách email RFC 822, giải mã charset, làm sạch thẻ HTML, xử lý email multipart và file đính kèm TXT/PDF, chuẩn hóa văn bản thô.
+- **Document AI Extractor Unit Tests (4 tests):** Bóc tách thực thể bằng Gemini Native Constrained Decoding (`response_schema=ExtractedPurchaseOrder`), Heuristic Rule-based Extractor fallback, bộ lọc Regex SQL injection.
+- **Document AI Entity Resolution Tests (5 tests):** Khớp nối khách hàng đa cấp độ (mã CUS, email, fuzzy name), lấy giá chuẩn DB, kiểm tra tồn kho khả dụng thời gian thực, tổng hợp cảnh báo lệch giá/thiếu hàng.
+- **Orders & Approvals REST API Tests (3 tests):** Đăng ký OpenAPI schema, vòng đời Ingestion $\to$ Approval Inbox, RBAC chặn sales rep và cho phép admin phê duyệt, quy trình từ chối đơn hàng.
 - **Agent Orchestrator Integration Tests (6 tests):** Ngữ cảnh đa vòng Multi-turn (`MemorySaver`), Hỏi đáp tài liệu trích dẫn nguồn RAG (`citations`), Đề xuất đơn hàng nháp Human-in-The-Loop giá chuẩn DB (`57,000,000 VND`), Chống Prompt Injection mạo danh lãnh đạo ép chốt đơn, Chặn tiêm lệnh SQL phá hoại DB (`DROP TABLE`), Chống leo thang đặc quyền RBAC (`sales_rep` đòi xem báo cáo doanh thu).
 - **Agent Tools Registry Unit Tests (11 tests):** 7 allowlisted tools, kiểm tra phân quyền RBAC báo cáo doanh thu, validation số lượng đặt hàng, bọc gọi RAG tool, kiểm tra thread-safe `UserContext`.
 - **Intent Classifier Router Unit Tests (10 tests):** Phân loại ý định bằng Gemini Native Constrained Decoding (`response_schema=IntentClassificationResult`), Heuristic fallback an toàn, bóc tách thực thể (`sku`, `warehouse`, `customer`, `quantity`, `items`), SQL injection filter.
@@ -248,7 +260,7 @@ Kết quả: **101/101 test cases Passed 100%**:
 - **RAG Gemini Embedding Tests (5 tests):** Gọi live model `gemini-embedding-2` MRL 1536 dims, batch embedding đa phân trang.
 - **ERP Invariant Unit Tests (1 test):** Bất biến số lượng tồn kho khả dụng.
 
-> 💡 **Lưu ý về Quota Gemini (15 RPM):** Bộ kiểm thử tích hợp Agent Orchestrator đã được trang bị cơ chế pacing tự động (nghỉ 4 giây giữa các lượt và test) kèm exponential backoff retry khi gặp HTTP 429, giúp chạy trơn tru trên cả tài khoản Google AI Studio Free Tier mà không sợ chạm trần giới hạn gọi mô hình.
+> 💡 **Lưu ý về Quota Gemini (15 RPM):** Toàn bộ các bài test tích hợp gọi mô hình đều được trang bị cơ chế pacing tự động (nghỉ 4 giây) kèm exponential backoff retry khi gặp HTTP 429, giúp chạy trơn tru trên cả tài khoản Google AI Studio Free Tier mà không sợ chạm trần giới hạn gọi mô hình.
 
 ---
 
@@ -261,8 +273,9 @@ Kết quả: **101/101 test cases Passed 100%**:
 | **S3** | **RAG Ingestion**: MinIO Object Storage, Multi-format Parser, Structure-aware Chunker, Gemini Embedding 2, Documents API | ✅ **Hoàn thành** |
 | **S4** | **RAG Retrieval**: Hybrid search (FTS + vector), RRF merge, Gemini Q&A Assistant, trích dẫn citation, phân quyền ACL | ✅ **Hoàn thành** |
 | **S5** | **Agent Orchestrator**: LangGraph state machine, intent routing, tool calling an toàn | ✅ **Hoàn thành** |
-| **S6** | **Document AI**: Phân tích email/đơn hàng, trích xuất Pydantic DTO, tạo draft order | ⏳ *Tiếp theo* |
-| **S7** | **Frontend & HITL**: Next.js Dashboard, Chatbox, Hộp thư phê duyệt Approval Inbox | 📋 Kế hoạch |
+| **S6** | **Document AI**: Phân tích email/đơn hàng, trích xuất Pydantic DTO, tạo draft order & Approval Inbox | ✅ **Hoàn thành** |
+| **S7** | **Frontend & HITL**: Next.js Dashboard, Chatbox, Hộp thư phê duyệt Approval Inbox | ⏳ *Tiếp theo* |
+| **S8** | **Hardening & Eval**: Benchmark 200+ test cases, chống prompt injection, demo hoàn chỉnh | 📋 Kế hoạch |
 | **S8** | **Hardening & Eval**: Benchmark 200+ test cases, chống prompt injection, demo hoàn chỉnh | 📋 Kế hoạch |
 
 Chi tiết lộ trình kỹ thuật và thiết kế kiến trúc xem tại [ERP_AI_Copilot_MVP_Technical_Blueprint.md](ERP_AI_Copilot_MVP_Technical_Blueprint.md).
