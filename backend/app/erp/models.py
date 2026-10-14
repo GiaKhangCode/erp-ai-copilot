@@ -133,6 +133,14 @@ class SalesOrder(Base):
         "SalesOrderItem", back_populates="order", cascade="all, delete-orphan"
     )
 
+    @property
+    def customer_name(self) -> Optional[str]:
+        return self.customer.name if self.customer else None
+
+    @property
+    def customer_code(self) -> Optional[str]:
+        return self.customer.code if self.customer else None
+
 
 class SalesOrderItem(Base):
     __tablename__ = "sales_order_items"

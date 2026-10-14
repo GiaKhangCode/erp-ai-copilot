@@ -52,7 +52,19 @@ flowchart TB
 
 ---
 
-## 📁 3. Cấu trúc mã nguồn
+## 🖼️ 3. Giao diện người dùng thực tế (Showcase)
+
+| Màn hình Đăng nhập (Authentication) | Không gian làm việc AI Copilot (Thought Stream & Streaming Chat) |
+|:---:|:---:|
+| ![Login Dashboard](docs/screenshots/login-dashboard.png) | ![Copilot Chat Dashboard](docs/screenshots/copilot-chat-dashboard.png) |
+
+| Hộp thư Phê duyệt Human-in-The-Loop (HITL Inbox) | Báo cáo Doanh thu & Quản trị Kinh doanh (Analytics) |
+|:---:|:---:|
+| ![Approval Inbox](docs/screenshots/approval-inbox-dashboard.png) | ![Revenue Dashboard](docs/screenshots/revenue-reporting-dashboard.png) |
+
+---
+
+## 📁 4. Cấu trúc mã nguồn
 
 Dự án được tổ chức theo mô hình **Modular Monolith**:
 
@@ -109,10 +121,11 @@ erp-ai-copilot/
 
 ---
 
-## ⚡ 4. Hướng dẫn cài đặt & Khởi chạy nhanh
+## ⚡ 5. Hướng dẫn cài đặt & Khởi chạy nhanh
 
 ### Yêu cầu hệ thống (Prerequisites)
 - [Python 3.11+](https://www.python.org/)
+- [Node.js 18+](https://nodejs.org/) & `npm`
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (đã cài đặt và đang chạy)
 - [Git](https://git-scm.com/)
 
@@ -191,7 +204,22 @@ Mở trình duyệt truy cập:
 
 ---
 
-## 🌐 5. Danh sách API Endpoints hiện tại (Sprint 1 đến Sprint 5)
+### Bước 5: Khởi chạy Frontend Dashboard (Next.js 16)
+
+Mở terminal mới, di chuyển vào thư mục `frontend`:
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Mở trình duyệt truy cập:
+- **Ứng dụng Web**: [http://localhost:3000](http://localhost:3000)
+- Đăng nhập bằng tài khoản `admin@erpcopilot.vn` / `admin123` để trải nghiệm đầy đủ các tính năng: Copilot hội thoại với luồng suy nghĩ (Thought Stream), Hộp thư phê duyệt HITL, Báo cáo doanh thu và Quản lý tài liệu RAG.
+
+---
+
+## 🌐 6. Danh sách API Endpoints hiện tại (Sprint 1 đến Sprint 7)
 
 | Module | Method | Endpoint | Mô tả & Ràng buộc |
 |---|---|---|---|
@@ -215,6 +243,7 @@ Mở trình duyệt truy cập:
 | **RAG Retrieval** | `POST` | `/api/v1/rag/search` | **Hybrid Search**: Dense Vector pgvector + Sparse Keyword FTS + RRF kết hợp lọc phân quyền ACL |
 | | `POST` | `/api/v1/rag/ask` | **Grounded Q&A**: Trợ lý hỏi đáp tài liệu thông minh (`gemini-3.5-flash-lite`), trích dẫn nguồn citation, chống hallucination |
 | **AI Chat & Copilot** | `POST` | `/api/v1/chat` | **Hội thoại thông minh với LangGraph Orchestrator**: Định tuyến tự động (ERP Query, RAG Doc QA, Đề xuất đơn hàng nháp HITL, Chitchat). Nạp danh tính JWT tin cậy, lưu vết PostgreSQL `ai.conversations` & `ai.messages` |
+| | `POST` | `/api/v1/chat/stream` | **SSE Streaming Response**: Truyền tải từng token theo thời gian thực (TTFT < 1s), phát trực tiếp các bước trong luồng suy nghĩ của AI (Thought Process Stream), tự động chuyển đổi fallback model khi quá tải |
 | | `GET` | `/api/v1/conversations` | Danh sách lịch sử các cuộc hội thoại của user hiện tại kèm số lượng tin nhắn |
 | | `GET` | `/api/v1/conversations/{id}` | Chi tiết cuộc hội thoại và toàn bộ lịch sử tin nhắn đa vòng |
 | | `DELETE` | `/api/v1/conversations/{id}` | Xóa cuộc hội thoại và toàn bộ tin nhắn liên quan (CASCADE) |
@@ -228,7 +257,7 @@ Mở trình duyệt truy cập:
 
 ---
 
-## 🧪 6. Chạy Kiểm thử (Automated Tests)
+## 🧪 7. Chạy Kiểm thử (Automated Tests)
 
 Chạy toàn bộ bộ test tự động (bao gồm Unit tests và Integration tests):
 ```powershell
@@ -264,7 +293,7 @@ Kết quả: **123/123 test cases Passed 100%**:
 
 ---
 
-## 🗺️ 7. Lộ trình phát triển (16 tuần / 8 Sprints)
+## 🗺️ 8. Lộ trình phát triển (16 tuần / 8 Sprints)
 
 | Sprint | Nội dung trọng tâm | Trạng thái |
 |:---:|:---|:---:|
@@ -274,9 +303,8 @@ Kết quả: **123/123 test cases Passed 100%**:
 | **S4** | **RAG Retrieval**: Hybrid search (FTS + vector), RRF merge, Gemini Q&A Assistant, trích dẫn citation, phân quyền ACL | ✅ **Hoàn thành** |
 | **S5** | **Agent Orchestrator**: LangGraph state machine, intent routing, tool calling an toàn | ✅ **Hoàn thành** |
 | **S6** | **Document AI**: Phân tích email/đơn hàng, trích xuất Pydantic DTO, tạo draft order & Approval Inbox | ✅ **Hoàn thành** |
-| **S7** | **Frontend & HITL**: Next.js Dashboard, Chatbox, Hộp thư phê duyệt Approval Inbox | ⏳ *Tiếp theo* |
-| **S8** | **Hardening & Eval**: Benchmark 200+ test cases, chống prompt injection, demo hoàn chỉnh | 📋 Kế hoạch |
-| **S8** | **Hardening & Eval**: Benchmark 200+ test cases, chống prompt injection, demo hoàn chỉnh | 📋 Kế hoạch |
+| **S7** | **Frontend & HITL**: Next.js App Router, Dashboard tổng quan, AI Copilot Workspace, Hộp thư phê duyệt Approval Inbox UI | ✅ **Hoàn thành** |
+| **S8** | **Hardening & Eval**: Benchmark 200+ test cases, chống prompt injection, demo hoàn chỉnh | ⏳ *Tiếp theo* |
 
 Chi tiết lộ trình kỹ thuật và thiết kế kiến trúc xem tại [ERP_AI_Copilot_MVP_Technical_Blueprint.md](ERP_AI_Copilot_MVP_Technical_Blueprint.md).
 

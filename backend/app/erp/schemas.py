@@ -70,6 +70,8 @@ class OrderResponse(BaseModel):
     id: UUID
     order_number: str
     customer_id: UUID
+    customer_name: Optional[str] = None
+    customer_code: Optional[str] = None
     status: str
     total_amount: Decimal
     created_at: datetime

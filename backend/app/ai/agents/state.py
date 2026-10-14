@@ -14,8 +14,9 @@ AgentIntent = Literal[
 
 class OrderItemDraft(BaseModel):
     """Chi tiết sản phẩm đặt trong đơn hàng nháp"""
-    sku: str = Field(description="Mã sản phẩm (VD: SKU-001)")
-    quantity: int = Field(description="Số lượng đặt")
+    sku: Optional[str] = Field(default=None, description="Mã sản phẩm (VD: SKU-001) hoặc tên sản phẩm tự nhiên")
+    product_name: Optional[str] = Field(default=None, description="Tên sản phẩm tự nhiên (VD: Chuột Ergonomic, Laptop Pro)")
+    quantity: int = Field(default=1, description="Số lượng đặt")
 
     def __getitem__(self, item: str) -> Any:
         return getattr(self, item)
@@ -30,9 +31,11 @@ class ExtractedEntities(BaseModel):
     Tránh lỗi 'additionalProperties' trong Gemini Developer API mode.
     Hỗ trợ truy cập cả dạng thuộc tính (.sku) lẫn dictionary (['sku'], .get('sku')).
     """
-    sku: Optional[str] = Field(default=None, description="Mã sản phẩm (VD: SKU-001)")
+    sku: Optional[str] = Field(default=None, description="Mã sản phẩm (VD: SKU-001) hoặc tên sản phẩm tự nhiên")
+    product_name: Optional[str] = Field(default=None, description="Tên sản phẩm tự nhiên")
     warehouse_code: Optional[str] = Field(default=None, description="Mã kho hàng (VD: WH-HN, WH-HCM)")
     customer_code: Optional[str] = Field(default=None, description="Mã khách hàng (VD: CUS-0001)")
+    customer_name: Optional[str] = Field(default=None, description="Tên khách hàng hoặc tên công ty (VD: Tập đoàn Bán lẻ Toàn Cầu, Công ty Á Châu)")
     customer_phone: Optional[str] = Field(default=None, description="Số điện thoại khách hàng")
     quantity: Optional[int] = Field(default=None, description="Số lượng")
     items: Optional[List[OrderItemDraft]] = Field(default=None, description="Danh sách mặt hàng đặt")

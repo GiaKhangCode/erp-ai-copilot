@@ -61,8 +61,11 @@ class Settings(BaseSettings):
     # Default LLM: Gemini 3.5 Flash-Lite (High speed, cost effective, agentic optimized)
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.1-flash-lite"
     GEMINI_TEMPERATURE: float = 0.2
     GEMINI_MAX_OUTPUT_TOKENS: int = 8192
+    GEMINI_MAX_RETRIES: int = 1
+    GEMINI_TIMEOUT_SECONDS: int = 12
 
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -42,10 +43,12 @@ class IntentRouter:
         self,
         genai_client: Optional[genai.Client] = None,
         model: Optional[str] = None,
+        fallback_model: Optional[str] = None,
         temperature: float = 0.0,
     ):
         self.api_key = settings.GEMINI_API_KEY
         self.model = model or settings.GEMINI_MODEL
+        self.fallback_model = fallback_model or settings.GEMINI_FALLBACK_MODEL
         self.temperature = temperature
 
         if genai_client:
@@ -61,7 +64,7 @@ class IntentRouter:
         history_summary: Optional[str] = None,
     ) -> IntentClassificationResult:
         """
-        Phân loại ý định từ câu hỏi người dùng bằng Native Constrained Decoding.
+        Phân loại ý định từ câu hỏi người dùng bằng Native Constrained Decoding với Fallback Model tự động.
         """
         clean_query = query.strip()
         if not clean_query:
@@ -90,31 +93,50 @@ class IntentRouter:
             response_schema=IntentClassificationResult,
         )
 
+        # 1. Thử Primary Model
         try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=config,
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config=config,
+                ),
+                timeout=settings.GEMINI_TIMEOUT_SECONDS,
             )
 
-            # Ưu tiên 1: Lấy trực tiếp Pydantic object đã parse sẵn từ Gemini SDK
             if getattr(response, "parsed", None) and isinstance(response.parsed, IntentClassificationResult):
                 return response.parsed
 
-            # Ưu tiên 2: Parse từ response.text nếu chạy qua mock client hoặc fallback
             raw_text = response.text if response else ""
-            if not raw_text:
-                raise ValueError("Empty response from LLM")
+            if raw_text:
+                cleaned_text = _clean_json_markdown(raw_text)
+                return IntentClassificationResult.model_validate_json(cleaned_text)
+        except Exception as e_primary:
+            logger.warning("Primary IntentRouter LLM (%s) failed: %s. Trying fallback (%s)...", self.model, e_primary, self.fallback_model)
 
-            cleaned_text = _clean_json_markdown(raw_text)
-            return IntentClassificationResult.model_validate_json(cleaned_text)
+        # 2. Thử Fallback Model (gemini-3.1-flash-lite)
+        try:
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=self.fallback_model,
+                    contents=prompt,
+                    config=config,
+                ),
+                timeout=settings.GEMINI_TIMEOUT_SECONDS,
+            )
 
-        except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "ResourceExhausted" in str(e):
-                logger.warning("Gemini 429 Rate Limit hit (15 RPM quota). Gracefully activating intelligent heuristic fallback.")
-            else:
-                logger.warning("LLM classification failed (%s). Falling back to heuristic classifier.", e)
-            return self._classify_with_heuristic(clean_query)
+            if getattr(response, "parsed", None) and isinstance(response.parsed, IntentClassificationResult):
+                return response.parsed
+
+            raw_text = response.text if response else ""
+            if raw_text:
+                cleaned_text = _clean_json_markdown(raw_text)
+                return IntentClassificationResult.model_validate_json(cleaned_text)
+        except Exception as e_fallback:
+            logger.warning("Fallback IntentRouter LLM (%s) also failed: %s. Using heuristic.", self.fallback_model, e_fallback)
+
+        # 3. Fallback Heuristic
+        return self._classify_with_heuristic(clean_query)
 
     def _classify_with_heuristic(self, query: str) -> IntentClassificationResult:
         """

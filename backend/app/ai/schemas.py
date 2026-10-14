@@ -33,6 +33,14 @@ class ChatCitation(BaseModel):
     quote: str
 
 
+class ThoughtStep(BaseModel):
+    """Một bước suy nghĩ/truy vấn của AI Copilot"""
+    step: str
+    title: str
+    detail: Optional[str] = None
+    status: str = "completed"
+
+
 class ChatResponse(BaseModel):
     """Phản hồi nghiệp vụ từ Agent Orchestrator theo chuẩn Blueprint Section 5.1"""
     conversation_id: uuid.UUID
@@ -43,6 +51,7 @@ class ChatResponse(BaseModel):
     citations: List[ChatCitation] = Field(default_factory=list)
     proposed_action: Optional[Dict[str, Any]] = None
     requires_confirmation: bool = False
+    thought_steps: List[ThoughtStep] = Field(default_factory=list)
 
 
 class MessageItem(BaseModel):

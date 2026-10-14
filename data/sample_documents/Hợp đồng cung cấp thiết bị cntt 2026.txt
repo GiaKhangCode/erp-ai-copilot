@@ -1,0 +1,87 @@
+CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
+Độc lập - Tự do - Hạnh phúc
+---o0o---
+
+HỢP ĐỒNG NGUYÊN TẮC CUNG CẤP THIẾT BỊ VÀ GIẢI PHÁP CNTT DOANH NGHIỆP
+Số: 2026/HĐNT-ERP/ABC-COPILOT
+
+- Căn cứ Bộ luật Dân sự số 91/2015/QH13 được Quốc hội ban hành ngày 24/11/2015;
+- Căn cứ Luật Thương mại số 36/2005/QH11 được Quốc hội ban hành ngày 14/06/2005;
+- Căn cứ vào nhu cầu và năng lực thực tế của hai Bên.
+
+Hôm nay, ngày 02 tháng 01 năm 2026, tại trụ sở Công ty ERP AI Copilot, chúng tôi gồm có:
+
+BÊN A (BÊN BÁN / CUNG CẤP):
+Tên đơn vị: CÔNG TY CỔ PHẦN CÔNG NGHỆ ERP AI COPILOT VIỆT NAM
+Địa chỉ: Tầng 12, Tòa nhà Innovation Center, Cầu Giấy, Hà Nội
+Đại diện bởi: Ông/Bà Quản Trị Viên Hệ Thống - Chức vụ: Tổng Giám Đốc
+Mã số thuế: 0109988776
+Số tài khoản: 190388889999 tại Ngân hàng Techcombank - Chi nhánh Thăng Long
+
+BÊN B (BÊN MUA):
+Tên đơn vị: CÔNG TY TNHH CÔNG NGHỆ ABC (Mã khách hàng: CUS-0001)
+Địa chỉ: Tầng 8, Tòa nhà TechnoPark, Gia Lâm, Hà Nội
+Đại diện bởi: Ông Trần Đình Long - Chức vụ: Giám đốc Điều hành
+Mã số thuế: 0106655443
+Số tài khoản: 110002233445 tại Ngân hàng Vietcombank - Chi nhánh Chương Dương
+
+Sau khi trao đổi và thống nhất, hai Bên cùng thỏa thuận ký kết Hợp đồng nguyên tắc với các điều khoản sau:
+
+ĐIỀU 1: ĐỐI TƯỢNG VÀ PHẠM VI HỢP ĐỒNG
+1.1. Bên A đồng ý cung cấp và Bên B đồng ý mua các thiết bị tin học văn phòng, thiết bị ngoại vi, màn hình đồ họa chuyên dụng và máy tính xách tay phục vụ vận hành doanh nghiệp.
+1.2. Danh mục sản phẩm niêm yết áp dụng trong suốt thời hạn hợp đồng bao gồm:
+     - SKU-001: Laptop Pro 14-inch M3 (Cấu hình: Apple M3 Chip, 16GB RAM, 512GB SSD) - Giá niêm yết: 28.500.000 VNĐ.
+     - SKU-002: Màn hình Dell UltraSharp 27-inch 4K (Model U2723QE, IPS Black) - Giá niêm yết: 14.200.000 VNĐ.
+     - SKU-003: Bàn phím cơ không dây Silent (Switch linear, kết nối Bluetooth/2.4G) - Giá niêm yết: 1.850.000 VNĐ.
+     - SKU-004: Chuột công thái học Wireless Pro - Giá niêm yết: 1.250.000 VNĐ.
+     - SKU-005: Docking Station Thunderbolt 4 Đa Năng - Giá niêm yết: 4.600.000 VNĐ.
+1.3. Chi tiết số lượng, tiến độ giao nhận và tổng giá trị của từng đợt mua hàng sẽ được thể hiện qua Đơn đặt hàng (Purchase Order - PO) hoặc Đơn hàng nháp được khởi tạo qua hệ thống ERP AI Copilot và được người có thẩm quyền của hai Bên phê duyệt.
+
+ĐIỀU 2: TIÊU CHUẨN CHẤT LƯỢNG VÀ BẢO HÀNH
+2.1. Toàn bộ thiết bị do Bên A cung cấp phải là hàng mới 100%, chính hãng, nguyên đai nguyên kiện, có chứng nhận xuất xứ (CO) và chứng nhận chất lượng (CQ) hợp lệ từ nhà sản xuất.
+2.2. Thời gian bảo hành tiêu chuẩn:
+     - Đối với Laptop (SKU-001) và Màn hình (SKU-002): Bảo hành 24 tháng theo tiêu chuẩn chính hãng toàn quốc.
+     - Đối với Phụ kiện và Bàn phím (SKU-003, SKU-004): Bảo hành 12 tháng đổi mới 1-1 nếu có lỗi phần cứng từ nhà sản xuất.
+2.3. Cam kết dịch vụ hỗ trợ (SLA):
+     - Bên A cam kết tiếp nhận và phản hồi yêu cầu kỹ thuật của Bên B trong vòng tối đa 02 giờ làm việc.
+     - Trường hợp thiết bị cần bảo hành kéo dài trên 03 ngày, Bên A có trách nhiệm cung cấp thiết bị thay thế tương đương để Bên B duy trì hoạt động kinh doanh liên tục.
+
+ĐIỀU 3: GIÁ CẢ VÀ CHÍNH SÁCH CHIẾT KHẤU THƯƠNG MẠI
+3.1. Đơn giá áp dụng là giá niêm yết đã bao gồm thuế Giá trị gia tăng (VAT 10%) và chi phí vận chuyển, bốc xếp đến chân công trình của Bên B tại khu vực nội thành Hà Nội và TP. Hồ Chí Minh.
+3.2. Chính sách chiết khấu lũy tiến theo doanh số tích lũy quý:
+     - Doanh số quý đạt từ 50.000.000 VNĐ đến dưới 100.000.000 VNĐ: Chiết khấu 5% trên tổng doanh số.
+     - Doanh số quý đạt từ 100.000.000 VNĐ đến dưới 300.000.000 VNĐ: Chiết khấu 8% trên tổng doanh số.
+     - Doanh số quý vượt trên 300.000.000 VNĐ: Chiết khấu 12% trên tổng doanh số, được cấn trừ trực tiếp vào công nợ của kỳ thanh toán kế tiếp.
+
+ĐIỀU 4: PHƯƠNG THỨC GIAO NHẬN VÀ KIỂM THỬ TỒN KHO
+4.1. Thời gian giao hàng tiêu chuẩn là 24 giờ đến 48 giờ kể từ thời điểm Đơn hàng được phê duyệt thành công trên hệ thống ERP AI Copilot.
+4.2. Địa điểm giao hàng: Theo địa chỉ chỉ định của Bên B ghi trên từng Đơn đặt hàng cụ thể.
+4.3. Khi nhận hàng, đại diện hai Bên sẽ tiến hành kiểm đếm số lượng, kiểm tra tình trạng ngoại quan niêm phong và ký Biên bản giao nhận hàng hóa (Goods Receipt Note - GRN).
+4.4. Nếu phát hiện thiếu hụt, vỡ hỏng bao bì hoặc sai lệch mã SKU, Bên B có quyền từ chối nhận hàng và Bên A phải giao bù trong vòng 24 giờ.
+
+ĐIỀU 5: ĐIỀU KHOẢN THANH TOÁN VÀ HẠN MỨC CÔNG NỢ
+5.1. Thời hạn thanh toán: Bên B được hưởng thời hạn công nợ tối đa là 30 (ba mươi) ngày kể từ ngày Bên A xuất trình đầy đủ:
+     - Biên bản bàn giao có chữ ký xác nhận của đại diện hai Bên.
+     - Hóa đơn giá trị gia tăng điện tử hợp lệ theo quy định của Bộ Tài chính.
+5.2. Hạn mức công nợ tối đa: Hạn mức công nợ cấp cho Bên B là 200.000.000 VNĐ (Hai trăm triệu đồng). Nếu tổng dư nợ vượt quá hạn mức này, hệ thống ERP sẽ tự động khóa quyền đặt đơn hàng mới cho đến khi Bên B thanh toán khoản nợ đến hạn.
+5.3. Phương thức thanh toán: Chuyển khoản vào tài khoản ngân hàng của Bên A được nêu tại phần đầu hợp đồng.
+
+ĐIỀU 6: PHẠT VI PHẠM HỢP ĐỒNG VÀ BỒI THƯỜNG THIỆT HẠI
+6.1. Phạt chậm giao hàng: Nếu Bên A chậm giao hàng quá thời hạn thỏa thuận mà không có lý do bất khả kháng được Bên B chấp thuận trước bằng văn bản, Bên A chịu phạt 0.5% giá trị phần hàng chậm giao cho mỗi ngày chậm trễ, nhưng tổng mức phạt không vượt quá 8% tổng giá trị đợt hàng.
+6.2. Phạt chậm thanh toán: Nếu Bên B chậm thanh toán quá thời hạn quy định tại Điều 5, Bên B phải chịu lãi suất phạt tương đương với lãi suất cho vay quá hạn do Ngân hàng Nhà nước Việt Nam quy định tại thời điểm thanh toán tính trên số tiền và số ngày chậm trả.
+
+ĐIỀU 7: CAM KẾT BẢO MẬT VÀ QUYỀN SỞ HỮU TRÍ TUỆ
+7.1. Hai Bên cam kết giữ bí mật toàn bộ thông tin giá cả, điều khoản chiết khấu, dữ liệu kỹ thuật và thông tin khách hàng trao đổi trong quá trình thực hiện hợp đồng.
+7.2. Cam kết bảo mật có hiệu lực vô thời hạn ngay cả khi hợp đồng này chấm dứt hiệu lực.
+
+ĐIỀU 8: GIẢI QUYẾT TRANH CHẤP
+8.1. Mọi tranh chấp phát sinh trong quá trình thực hiện hợp đồng trước hết sẽ được giải quyết thông qua thương lượng, hòa giải trên tinh thần hợp tác và tôn trọng lợi ích lẫn nhau.
+8.2. Trong trường hợp không đạt được thỏa thuận hòa giải trong vòng 30 ngày kể từ ngày phát sinh tranh chấp, một trong hai Bên có quyền đưa vụ việc ra Trung tâm Trọng tài Quốc tế Việt Nam (VIAC) bên cạnh Phòng Thương mại và Công nghiệp Việt Nam để giải quyết theo Quy tắc tố tụng trọng tài của Trung tâm này. Phán quyết của Trọng tài là chung thẩm và ràng buộc hai Bên.
+
+ĐIỀU 9: HIỆU LỰC HỢP ĐỒNG VÀ ĐIỀU KHOẢN THI HÀNH
+9.1. Hợp đồng này có hiệu lực kể từ ngày ký đến hết ngày 31 tháng 12 năm 2026. Hợp đồng sẽ tự động gia hạn thêm 01 (một) năm nếu trước ngày hết hạn 30 ngày không có Bên nào gửi văn bản yêu cầu chấm dứt.
+9.2. Hợp đồng được lập thành 04 (bốn) bản gốc bằng tiếng Việt có giá trị pháp lý như nhau, Bên A giữ 02 bản, Bên B giữ 02 bản để thực hiện.
+
+ĐẠI DIỆN BÊN A                                         ĐẠI DIỆN BÊN B
+TỔNG GIÁM ĐỐC                                         GIÁM ĐỐC ĐIỀU HÀNH
+(Ký tên, đóng dấu)                                     (Ký tên, đóng dấu)

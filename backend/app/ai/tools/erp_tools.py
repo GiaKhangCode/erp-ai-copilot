@@ -17,17 +17,17 @@ logger = logging.getLogger(__name__)
 
 
 @tool
-async def get_inventory(sku: str, warehouse_code: Optional[str] = None) -> str:
+async def get_inventory(sku: Optional[str] = None, warehouse_code: Optional[str] = None) -> str:
     """
-    Tra cứu số lượng tồn kho thời gian thực của sản phẩm theo mã SKU và mã kho.
+    Tra cứu số lượng tồn kho thời gian thực trong hệ thống ERP.
     Trả về số lượng tồn thực tế (quantity_on_hand), số lượng đang giữ/đặt trước (quantity_reserved),
     và số lượng khả dụng có thể bán (quantity_available = on_hand - reserved).
 
     Args:
-        sku: Mã định danh sản phẩm (Ví dụ: 'SKU-001', 'SKU-002'). Bắt buộc.
+        sku: Mã định danh sản phẩm (Ví dụ: 'SKU-001', 'SKU-002'). Nếu không truyền (None), sẽ tra cứu tồn kho của TẤT CẢ các sản phẩm trong hệ thống.
         warehouse_code: Mã kho hàng tùy chọn (Ví dụ: 'WH-HN', 'WH-HCM'). Nếu không cung cấp, tra cứu trên tất cả các kho.
     """
-    clean_sku = sku.strip().upper()
+    clean_sku = sku.strip().upper() if sku else None
     clean_wh = warehouse_code.strip().upper() if warehouse_code else None
 
     async with async_session_factory() as session:
@@ -38,9 +38,14 @@ async def get_inventory(sku: str, warehouse_code: Optional[str] = None) -> str:
         )
 
         if not items:
+            msg = f"Không tìm thấy dữ liệu tồn kho"
+            if clean_sku:
+                msg += f" cho sản phẩm SKU '{clean_sku}'"
+            if clean_wh:
+                msg += f" tại kho '{clean_wh}'"
             return json.dumps({
                 "found": False,
-                "message": f"Không tìm thấy dữ liệu tồn kho cho sản phẩm SKU '{clean_sku}'" + (f" tại kho '{clean_wh}'" if clean_wh else ""),
+                "message": msg,
                 "items": [],
             }, ensure_ascii=False)
 
@@ -50,13 +55,16 @@ async def get_inventory(sku: str, warehouse_code: Optional[str] = None) -> str:
 
         return json.dumps({
             "found": True,
-            "sku": clean_sku,
-            "product_name": items[0].product_name,
+            "sku_filter": clean_sku,
+            "warehouse_filter": clean_wh,
+            "total_items": len(items),
             "total_available": total_available,
             "total_on_hand": total_on_hand,
             "total_reserved": total_reserved,
-            "warehouses": [
+            "items": [
                 {
+                    "sku": i.product_sku,
+                    "product_name": i.product_name,
                     "warehouse_code": i.warehouse_code,
                     "warehouse_name": i.warehouse_name,
                     "quantity_on_hand": i.quantity_on_hand,
@@ -64,6 +72,47 @@ async def get_inventory(sku: str, warehouse_code: Optional[str] = None) -> str:
                     "quantity_available": i.quantity_available,
                 }
                 for i in items
+            ],
+        }, ensure_ascii=False)
+
+
+@tool
+async def list_products(is_active: Optional[bool] = None, limit: int = 50) -> str:
+    """
+    Tra cứu danh sách tất cả các mặt hàng / sản phẩm đang kinh doanh trong hệ thống ERP.
+    Trả về danh sách sản phẩm gồm mã SKU, tên sản phẩm, đơn giá niêm yết (VND), và trạng thái hoạt động.
+    Sử dụng công cụ này khi người dùng hỏi: 'Tôi đang có những mặt hàng nào?', 'Danh sách sản phẩm', 'Các mặt hàng hiện có', 'Bảng giá sản phẩm'.
+
+    Args:
+        is_active: Lọc sản phẩm đang hoạt động (True/False). Mặc định None (lấy tất cả).
+        limit: Số lượng sản phẩm tối đa (mặc định: 50).
+    """
+    async with async_session_factory() as session:
+        prods = await ProductService.list_products(
+            session=session,
+            limit=min(limit, 100),
+            is_active=is_active,
+        )
+        if not prods:
+            return json.dumps({
+                "found": False,
+                "total": 0,
+                "message": "Không tìm thấy sản phẩm nào trong hệ thống ERP.",
+                "products": [],
+            }, ensure_ascii=False)
+
+        return json.dumps({
+            "found": True,
+            "total": len(prods),
+            "products": [
+                {
+                    "sku": p.sku,
+                    "name": p.name,
+                    "unit_price": float(p.unit_price),
+                    "formatted_price": f"{p.unit_price:,.0f} VND",
+                    "is_active": p.is_active,
+                }
+                for p in prods
             ],
         }, ensure_ascii=False)
 
@@ -121,6 +170,46 @@ async def get_customer(customer_code: str) -> str:
                 "found": False,
                 "message": f"Không tìm thấy khách hàng với mã '{clean_code}' trong hệ thống ERP.",
             }, ensure_ascii=False)
+
+
+@tool
+async def list_customers(status: Optional[str] = None, limit: int = 50) -> str:
+    """
+    Tra cứu danh sách khách hàng doanh nghiệp hoặc cá nhân trong hệ thống ERP.
+    Trả về danh sách khách hàng gồm mã code, tên khách hàng, email và trạng thái tài khoản.
+    Dùng khi người dùng hỏi: 'Danh sách khách hàng', 'Có những khách hàng nào?', 'Xem các khách hàng'.
+
+    Args:
+        status: Lọc theo trạng thái ('active', 'inactive'). Mặc định None (tất cả).
+        limit: Số lượng khách hàng tối đa (mặc định: 50).
+    """
+    async with async_session_factory() as session:
+        custs = await CustomerService.list_customers(
+            session=session,
+            limit=min(limit, 100),
+            status=status,
+        )
+        if not custs:
+            return json.dumps({
+                "found": False,
+                "total": 0,
+                "message": "Không tìm thấy khách hàng nào trong hệ thống ERP.",
+                "customers": [],
+            }, ensure_ascii=False)
+
+        return json.dumps({
+            "found": True,
+            "total": len(custs),
+            "customers": [
+                {
+                    "customer_code": c.code,
+                    "name": c.name,
+                    "email": c.email,
+                    "status": c.status,
+                }
+                for c in custs
+            ],
+        }, ensure_ascii=False)
 
 
 @tool
@@ -300,14 +389,69 @@ async def propose_sales_order_draft(
                 "formatted_line_total": f"{line_total:,.0f} VND",
             })
 
+        # 3. Create Draft SalesOrder in database
+        import uuid as _uuid
+        import hashlib as _hashlib
+        from app.erp.schemas import OrderDraftCreate, OrderItemDraft as ERPOrderItemDraft
+        from app.erp.models import ApprovalRequest
+
+        user_ctx = get_current_user_context()
+        actor_uuid = None
+        if user_ctx.user_id:
+            try:
+                actor_uuid = _uuid.UUID(user_ctx.user_id)
+            except Exception:
+                pass
+
+        draft_payload = OrderDraftCreate(
+            customer_code=cust.code,
+            items=[
+                ERPOrderItemDraft(sku=it["sku"], quantity=it["quantity"])
+                for it in validated_items
+            ],
+        )
+
+        order = await SalesOrderService.create_order_draft(
+            session=session,
+            payload=draft_payload,
+            actor_id=actor_uuid,
+        )
+
+        # 4. Create ApprovalRequest for Human-in-the-Loop approval
+        approval_payload = {
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+            "customer_code": cust.code,
+            "customer_name": cust.name,
+            "total_amount": float(order.total_amount),
+            "source_type": "copilot_chat",
+            "items": validated_items,
+        }
+        payload_bytes = json.dumps(approval_payload, sort_keys=True).encode("utf-8")
+        payload_hash = _hashlib.sha256(payload_bytes).hexdigest()
+
+        approval_req = ApprovalRequest(
+            id=_uuid.uuid4(),
+            action_type="create_sales_order_draft",
+            target_id=order.id,
+            payload=approval_payload,
+            payload_hash=payload_hash,
+            status="pending",
+            requested_by=actor_uuid or _uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        )
+        session.add(approval_req)
+        await session.commit()
+
         return json.dumps({
             "success": True,
-            "action": "propose_order_draft",
+            "action": "create_sales_order_draft",
+            "order_id": str(order.id),
+            "order_number": order.order_number,
             "customer_code": cust.code,
             "customer_name": cust.name,
             "items": validated_items,
-            "total_amount": float(total_amount),
-            "formatted_total_amount": f"{total_amount:,.0f} VND",
-            "message": f"Đã lập bản đề xuất đơn hàng nháp cho khách hàng {cust.name} ({cust.code}) với tổng tiền {total_amount:,.0f} VND. Vui lòng xác nhận để hoàn tất tạo đơn.",
+            "total_amount": float(order.total_amount),
+            "formatted_total_amount": f"{order.total_amount:,.0f} VND",
+            "message": f"Đã khởi tạo đơn hàng nháp **{order.order_number}** cho khách hàng **{cust.name}** ({cust.code}) với tổng tiền **{order.total_amount:,.0f} VND**. Đơn hàng đã được lưu vào hệ thống ở trạng thái Bản nháp (draft) và đang chờ phê duyệt tại Hộp thư phê duyệt.",
             "requires_user_confirmation": True,
         }, ensure_ascii=False)

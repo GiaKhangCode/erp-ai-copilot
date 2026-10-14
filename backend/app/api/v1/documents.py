@@ -1,6 +1,8 @@
 import uuid
 from typing import Optional
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -205,3 +207,40 @@ async def get_download_url(
         )
     url = service.get_download_url(doc, expires_in=expires_in)
     return {"download_url": url, "expires_in": expires_in}
+
+
+@router.get(
+    "/{document_id}/file",
+    summary="Download or stream the original raw document file directly",
+)
+async def get_document_file(
+    document_id: uuid.UUID,
+    inline: bool = Query(False, description="Whether to show inline for browser preview"),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
+    service: DocumentService = Depends(get_document_service),
+):
+    doc = await service.get_document(session, document_id)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document '{document_id}' not found",
+        )
+    try:
+        file_bytes = service.storage.download_file(doc.storage_key)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Không thể tải tệp tin từ hệ thống lưu trữ: {e}",
+        )
+
+    disposition = "inline" if inline else "attachment"
+    encoded_name = quote(doc.filename)
+    return Response(
+        content=file_bytes,
+        media_type=doc.mime_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{encoded_name}"; filename*=UTF-8\'\'{encoded_name}',
+        },
+    )
+

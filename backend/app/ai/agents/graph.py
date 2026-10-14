@@ -16,7 +16,9 @@ from app.ai.tools.context import UserContext, get_current_user_context, set_curr
 from app.ai.tools.erp_tools import (
     get_inventory,
     get_product,
+    list_products,
     get_customer,
+    list_customers,
     get_sales_orders,
     get_revenue_report,
     propose_sales_order_draft,
@@ -35,19 +37,23 @@ logger = logging.getLogger(__name__)
 ERP_READ_TOOLS = [
     get_inventory,
     get_product,
+    list_products,
     get_customer,
+    list_customers,
     get_sales_orders,
     get_revenue_report,
 ]
 
 
-def _get_llm(temperature: float = 0.0) -> ChatGoogleGenerativeAI:
-    """Khởi tạo ChatGoogleGenerativeAI với mô hình cấu hình trong settings và retry tự động"""
+def _get_llm(model: Optional[str] = None, temperature: float = 0.0) -> ChatGoogleGenerativeAI:
+    """Khởi tạo ChatGoogleGenerativeAI với mô hình, max_retries và timeout tối ưu"""
+    target_model = model or settings.GEMINI_MODEL
     return ChatGoogleGenerativeAI(
-        model=settings.GEMINI_MODEL,
+        model=target_model,
         google_api_key=settings.GEMINI_API_KEY,
         temperature=temperature,
-        max_retries=3,
+        max_retries=settings.GEMINI_MAX_RETRIES,
+        timeout=settings.GEMINI_TIMEOUT_SECONDS,
     )
 
 def _extract_text(content: Any) -> str:
@@ -130,14 +136,47 @@ def should_call_erp_tools(state: ERPAgentState) -> Literal["erp_tools", "synthes
 
 async def erp_tools_node(state: ERPAgentState) -> Dict[str, Any]:
     """
-    Node thực thi ToolNode cho các công cụ ERP với bảo mật context tự động nạp từ state.
+    Node thực thi các công cụ ERP với bảo mật context tự động nạp từ state.
+    Thực thi trực tiếp danh sách tool_calls từ mô hình AI một cách an toàn và tương thích.
     """
     set_current_user_context(UserContext(
         user_id=state.get("user_id"),
         user_role=state.get("user_role"),
     ))
-    tool_node = ToolNode(ERP_READ_TOOLS)
-    return await tool_node.ainvoke(state)
+
+    tools_by_name = {tool.name: tool for tool in ERP_READ_TOOLS}
+    messages = state.get("messages", [])
+    tool_messages: List[BaseMessage] = []
+    tool_results = list(state.get("tool_results", []))
+
+    if messages:
+        last_msg = messages[-1]
+        tool_calls = getattr(last_msg, "tool_calls", []) or []
+        for idx, call in enumerate(tool_calls):
+            name = call.get("name")
+            args = call.get("args", {})
+            call_id = call.get("id") or f"call_{idx}_{name}"
+            tool = tools_by_name.get(name)
+            if tool:
+                try:
+                    res = await tool.ainvoke(args)
+                    res_str = str(res)
+                    tool_messages.append(ToolMessage(content=res_str, tool_call_id=call_id, name=name))
+                    try:
+                        parsed = json.loads(res_str)
+                        tool_results.append(parsed if isinstance(parsed, dict) else {"result": parsed})
+                    except Exception:
+                        tool_results.append({"name": name, "result": res_str})
+                except Exception as e:
+                    logger.error("Error executing tool %s: %s", name, e)
+                    err_str = f"Lỗi thực thi công cụ {name}: {str(e)}"
+                    tool_messages.append(ToolMessage(content=err_str, tool_call_id=call_id, name=name))
+                    tool_results.append({"name": name, "error": str(e), "success": False})
+
+    return {
+        "messages": tool_messages,
+        "tool_results": tool_results,
+    }
 
 
 
@@ -175,36 +214,150 @@ async def rag_agent_node(state: ERPAgentState) -> Dict[str, Any]:
 async def draft_order_agent_node(state: ERPAgentState) -> Dict[str, Any]:
     """
     Node xử lý đề xuất đơn hàng nháp (Human-in-The-Loop Draft Proposal).
+    Tự động đối chiếu (Entity Resolution) thông minh từ ngôn ngữ tự nhiên:
+    - Nhận diện cả Mã khách hàng (CUS-XXXX) lẫn Tên khách hàng (VD: 'Tập đoàn Bán lẻ Toàn Cầu', 'Á Châu')
+    - Nhận diện cả Mã SKU (SKU-XXX) lẫn Tên sản phẩm (VD: 'chuột ergonomic', 'laptop pro')
     """
+    import re
+    from app.db.session import async_session_factory
+    from app.document_ai.resolver import EntityResolver
+    from app.document_ai.schemas import ExtractedPurchaseOrder, ExtractedOrderItem
+    from app.erp.services.customer import CustomerService
+    from app.erp.models import Product
+    from sqlalchemy import select
+
     set_current_user_context(UserContext(
         user_id=state.get("user_id"),
         user_role=state.get("user_role"),
     ))
 
-    entities = state.get("entities")
-    customer_code = None
-    items = None
+    entities = state.get("entities") or state.get("extracted_entities")
+    raw_customer = None
+    raw_items = []
+    user_q = state.get("user_query", "")
 
     if isinstance(entities, ExtractedEntities):
-        customer_code = entities.customer_code
+        raw_customer = entities.customer_code or entities.customer_name
         if entities.items:
-            items = [{"sku": item.sku, "quantity": item.quantity} for item in entities.items]
-        elif entities.sku and entities.quantity:
-            items = [{"sku": entities.sku, "quantity": entities.quantity}]
+            for item in entities.items:
+                name_or_sku = item.sku or getattr(item, "product_name", None)
+                if name_or_sku:
+                    raw_items.append({"sku": name_or_sku, "quantity": item.quantity or 1})
+        elif (entities.sku or getattr(entities, "product_name", None)) and entities.quantity:
+            raw_items.append({
+                "sku": entities.sku or getattr(entities, "product_name", None),
+                "quantity": entities.quantity,
+            })
     elif isinstance(entities, dict):
-        customer_code = entities.get("customer_code")
-        items = entities.get("items")
-        if not items and entities.get("sku") and entities.get("quantity"):
-            items = [{"sku": entities.get("sku"), "quantity": entities.get("quantity")}]
+        raw_customer = entities.get("customer_code") or entities.get("customer_name")
+        dict_items = entities.get("items") or []
+        if isinstance(dict_items, list) and dict_items:
+            for it in dict_items:
+                name_or_sku = it.get("sku") or it.get("product_name")
+                if name_or_sku:
+                    raw_items.append({"sku": name_or_sku, "quantity": it.get("quantity") or 1})
+        elif (entities.get("sku") or entities.get("product_name")) and entities.get("quantity"):
+            raw_items.append({
+                "sku": entities.get("sku") or entities.get("product_name"),
+                "quantity": entities.get("quantity") or 1,
+            })
 
+    # Regex trích xuất dự phòng nếu LLM chưa bắt được
+    if not raw_customer and user_q:
+        cus_match = re.search(r"(CUS-\d{4})", user_q, re.IGNORECASE)
+        if cus_match:
+            raw_customer = cus_match.group(1).upper()
+        else:
+            m_cus = re.search(r"(?:cho|khách hàng|khách|cty|công ty|tập đoàn)\s+([^,:\n.]+)", user_q, re.IGNORECASE)
+            if m_cus:
+                raw_customer = m_cus.group(1).strip()
+
+    if not raw_items and user_q:
+        item_matches = re.findall(r"(\d+)\s*(?:cái|chiếc|sp|hộp|bộ)?\s*(SKU-\d{3})", user_q, re.IGNORECASE)
+        if item_matches:
+            raw_items = [{"sku": sku.upper(), "quantity": int(qty)} for qty, sku in item_matches]
+        else:
+            item_matches2 = re.findall(r"(SKU-\d{3})\s*(?:x|:|,)?\s*(\d+)", user_q, re.IGNORECASE)
+            if item_matches2:
+                raw_items = [{"sku": sku.upper(), "quantity": int(qty)} for sku, qty in item_matches2]
+
+    # Thực hiện Entity Resolution với cơ sở dữ liệu thực
+    resolved_customer_code = None
+    resolved_customer_name = None
+    resolved_items = []
     tool_results = list(state.get("tool_results", []))
 
-    if not customer_code or not items:
-        missing_payload = {
+    async with async_session_factory() as session:
+        # 1. Khớp nối khách hàng
+        if raw_customer:
+            clean_cust = str(raw_customer).strip()
+            if re.match(r"^CUS-\d{4}$", clean_cust, re.IGNORECASE):
+                try:
+                    c_obj = await CustomerService.get_by_code(session, clean_cust.upper())
+                    resolved_customer_code = c_obj.code
+                    resolved_customer_name = c_obj.name
+                except Exception:
+                    pass
+
+            if not resolved_customer_code:
+                c_obj = await EntityResolver.resolve_customer(
+                    session,
+                    ExtractedPurchaseOrder(customer_name_candidate=clean_cust)
+                )
+                if c_obj:
+                    resolved_customer_code = c_obj.code
+                    resolved_customer_name = c_obj.name
+
+        # 2. Khớp nối sản phẩm
+        for it in raw_items:
+            raw_val = it.get("sku") or ""
+            qty = it.get("quantity") or 1
+            clean_val = str(raw_val).strip()
+            if re.match(r"^SKU-\d{3}$", clean_val, re.IGNORECASE):
+                resolved_items.append({"sku": clean_val.upper(), "quantity": qty})
+            else:
+                res_prod = await EntityResolver.resolve_single_item(
+                    session,
+                    ExtractedOrderItem(product_name=clean_val, quantity=qty)
+                )
+                if res_prod:
+                    resolved_items.append({"sku": res_prod.sku, "quantity": qty})
+
+        # Nếu danh sách sản phẩm vẫn trống, quét trực tiếp từ text
+        if not resolved_items and user_q:
+            all_prods = (await session.execute(select(Product).where(Product.is_active == True))).scalars().all()
+            for prod in all_prods:
+                prod_words = [w for w in prod.name.lower().split() if len(w) > 3]
+                if any(w in user_q.lower() for w in prod_words):
+                    m_qty = re.search(rf"(\d+)\s*(?:cái|chiếc|sp)?\s*{re.escape(prod_words[0])}", user_q, re.IGNORECASE)
+                    found_qty = int(m_qty.group(1)) if m_qty else 1
+                    resolved_items.append({"sku": prod.sku, "quantity": found_qty})
+                    break
+
+    # Kiểm tra tính đầy đủ sau khi đã giải quyết thực thể
+    if not resolved_customer_code or not resolved_items:
+        reason_parts = []
+        if not resolved_customer_code:
+            if raw_customer:
+                reason_parts.append(f"Không tìm thấy khách hàng **'{raw_customer}'** trong hệ thống ERP")
+            else:
+                reason_parts.append("Chưa cung cấp thông tin hoặc tên khách hàng")
+        if not resolved_items:
+            if raw_items:
+                unmatched = ", ".join([str(it.get("sku")) for it in raw_items])
+                reason_parts.append(f"Không tìm thấy sản phẩm tương ứng với **'{unmatched}'**")
+            else:
+                reason_parts.append("Chưa chỉ định sản phẩm và số lượng đặt hàng")
+
+        missing_msg = (
+            f"⚠️ **Không thể khởi tạo đơn hàng nháp do:**\n- "
+            + "\n- ".join(reason_parts)
+            + "\n\n💡 *Gợi ý:* Bạn có thể dùng tên thường (VD: *'lên đơn 2 chuột ergonomic cho tập đoàn bán lẻ toàn cầu'*) hoặc mã định danh (VD: *'CUS-0001', 'SKU-001'*)."
+        )
+        tool_results.append({
             "success": False,
-            "message": "Để tạo đơn hàng nháp, vui lòng cung cấp mã khách hàng (VD: CUS-0001) và danh sách mặt hàng kèm số lượng (VD: 10 cái SKU-001).",
-        }
-        tool_results.append(missing_payload)
+            "message": missing_msg,
+        })
         return {
             "tool_results": tool_results,
             "proposed_action": None,
@@ -212,8 +365,8 @@ async def draft_order_agent_node(state: ERPAgentState) -> Dict[str, Any]:
 
     try:
         raw_result = await propose_sales_order_draft.ainvoke({
-            "customer_code": customer_code,
-            "items": items,
+            "customer_code": resolved_customer_code,
+            "items": resolved_items,
         })
         draft_data = json.loads(raw_result)
         tool_results.append(draft_data)
@@ -240,19 +393,28 @@ async def draft_order_agent_node(state: ERPAgentState) -> Dict[str, Any]:
 
 
 async def chitchat_agent_node(state: ERPAgentState) -> Dict[str, Any]:
-    """Node xử lý chào hỏi xã giao và câu hỏi chung"""
+    """Node xử lý chào hỏi xã giao và câu hỏi chung với fallback tự động"""
     query = state.get("user_query", "")
+    content = None
+    prompt = [
+        SystemMessage(content=CHITCHAT_SYSTEM_PROMPT),
+        HumanMessage(content=query),
+    ]
+
+    # Thử primary model trước
     try:
-        llm = _get_llm(temperature=0.3)
-        prompt = [
-            SystemMessage(content=CHITCHAT_SYSTEM_PROMPT),
-            HumanMessage(content=query),
-        ]
+        llm = _get_llm(model=settings.GEMINI_MODEL, temperature=0.3)
         res = await llm.ainvoke(prompt)
         content = _extract_text(res.content)
-    except Exception as e:
-        logger.warning("Chitchat LLM failed, using fallback: %s", e)
-        content = "Xin chào! Tôi là ERP AI Copilot. Tôi có thể hỗ trợ bạn tra cứu tồn kho, khách hàng, đơn hàng, hỏi đáp tài liệu chính sách và lên đơn hàng nháp."
+    except Exception as e_primary:
+        logger.warning("Primary LLM (%s) failed in chitchat: %s. Trying fallback (%s)...", settings.GEMINI_MODEL, e_primary, settings.GEMINI_FALLBACK_MODEL)
+        try:
+            llm_fallback = _get_llm(model=settings.GEMINI_FALLBACK_MODEL, temperature=0.3)
+            res = await llm_fallback.ainvoke(prompt)
+            content = _extract_text(res.content)
+        except Exception as e_fallback:
+            logger.warning("Fallback LLM (%s) also failed in chitchat: %s", settings.GEMINI_FALLBACK_MODEL, e_fallback)
+            content = "Xin chào! Tôi là ERP AI Copilot. Tôi có thể hỗ trợ bạn tra cứu tồn kho, doanh thu, khách hàng, hỏi đáp tài liệu chính sách và lên đơn hàng nháp."
 
     return {
         "answer": content,
@@ -261,24 +423,32 @@ async def chitchat_agent_node(state: ERPAgentState) -> Dict[str, Any]:
 
 
 async def clarify_agent_node(state: ERPAgentState) -> Dict[str, Any]:
-    """Node làm rõ câu hỏi khi ý định chưa xác định được"""
+    """Node làm rõ câu hỏi khi ý định chưa xác định được với fallback tự động"""
     query = state.get("user_query", "")
+    content = None
+    prompt = [
+        SystemMessage(content=CLARIFY_SYSTEM_PROMPT),
+        HumanMessage(content=query),
+    ]
+
     try:
-        llm = _get_llm(temperature=0.2)
-        prompt = [
-            SystemMessage(content=CLARIFY_SYSTEM_PROMPT),
-            HumanMessage(content=query),
-        ]
+        llm = _get_llm(model=settings.GEMINI_MODEL, temperature=0.2)
         res = await llm.ainvoke(prompt)
         content = _extract_text(res.content)
-    except Exception as e:
-        logger.warning("Clarify LLM failed, using fallback: %s", e)
-        content = (
-            "Yêu cầu của bạn chưa đủ rõ ràng hoặc nằm ngoài phạm vi hệ thống. "
-            "Bạn có thể yêu cầu tôi: (1) Tra cứu tồn kho SKU hoặc khách hàng; "
-            "(2) Hỏi đáp quy định, chính sách công ty; "
-            "(3) Tạo đơn hàng nháp cho khách hàng."
-        )
+    except Exception as e_primary:
+        logger.warning("Primary LLM failed in clarify: %s. Trying fallback (%s)...", e_primary, settings.GEMINI_FALLBACK_MODEL)
+        try:
+            llm_fallback = _get_llm(model=settings.GEMINI_FALLBACK_MODEL, temperature=0.2)
+            res = await llm_fallback.ainvoke(prompt)
+            content = _extract_text(res.content)
+        except Exception as e_fallback:
+            logger.warning("Fallback LLM failed in clarify: %s", e_fallback)
+            content = (
+                "Yêu cầu của bạn chưa đủ rõ ràng hoặc nằm ngoài phạm vi hệ thống. "
+                "Bạn có thể yêu cầu tôi: (1) Tra cứu tồn kho SKU hoặc doanh thu; "
+                "(2) Hỏi đáp quy định, chính sách công ty; "
+                "(3) Tạo đơn hàng nháp cho khách hàng."
+            )
 
     return {
         "answer": content,
@@ -341,43 +511,40 @@ async def synthesizer_node(state: ERPAgentState) -> Dict[str, Any]:
                 "messages": [AIMessage(content=fail_msg)],
             }
 
-    # Tổng hợp qua LLM Synthesizer
+    # Tổng hợp qua LLM Synthesizer với Fallback Model tự động
     final_ans = None
-    for attempt in range(1, 3):
+    context_summary = []
+    for msg in state.get("messages", []):
+        if isinstance(msg, ToolMessage):
+            context_summary.append(f"Tool Result ({msg.name}): {msg.content}")
+
+    if tool_results:
+        context_summary.append(f"Structured Tool Results: {json.dumps(tool_results, ensure_ascii=False)}")
+
+    context_text = "\n\n".join(context_summary)
+
+    synthesizer_prompt = [
+        SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
+        HumanMessage(content=(
+            f"Câu hỏi người dùng: {user_query}\n\n"
+            f"Ý định: {intent}\n\n"
+            f"Dữ liệu công cụ thu thập được:\n{context_text}\n\n"
+            f"Hãy tổng hợp thành phản hồi hoàn chỉnh, súc tích và chính xác bằng Tiếng Việt (sử dụng bảng Markdown chuẩn nếu có nhiều số liệu):"
+        )),
+    ]
+
+    try:
+        llm = _get_llm(model=settings.GEMINI_MODEL, temperature=0.0)
+        res = await llm.ainvoke(synthesizer_prompt)
+        final_ans = _extract_text(res.content)
+    except Exception as e_primary:
+        logger.warning("Primary LLM (%s) failed in synthesizer: %s. Trying fallback (%s)...", settings.GEMINI_MODEL, e_primary, settings.GEMINI_FALLBACK_MODEL)
         try:
-            llm = _get_llm(temperature=0.0)
-
-            context_summary = []
-            # Lấy kết quả từ ToolMessages trong history
-            for msg in state.get("messages", []):
-                if isinstance(msg, ToolMessage):
-                    context_summary.append(f"Tool Result ({msg.name}): {msg.content}")
-
-            if tool_results:
-                context_summary.append(f"Structured Tool Results: {json.dumps(tool_results, ensure_ascii=False)}")
-
-            context_text = "\n\n".join(context_summary)
-
-            synthesizer_prompt = [
-                SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
-                HumanMessage(content=(
-                    f"Câu hỏi người dùng: {user_query}\n\n"
-                    f"Ý định: {intent}\n\n"
-                    f"Dữ liệu công cụ thu thập được:\n{context_text}\n\n"
-                    f"Hãy tổng hợp thành phản hồi hoàn chỉnh, súc tích và chính xác bằng Tiếng Việt:"
-                )),
-            ]
-
-            res = await llm.ainvoke(synthesizer_prompt)
+            llm_fallback = _get_llm(model=settings.GEMINI_FALLBACK_MODEL, temperature=0.0)
+            res = await llm_fallback.ainvoke(synthesizer_prompt)
             final_ans = _extract_text(res.content)
-            break
-        except Exception as e:
-            if ("429" in str(e) or "ResourceExhausted" in str(e)) and attempt == 1:
-                logger.warning("Gemini 429 rate limit hit in synthesizer_node. Backing off 5s...")
-                await asyncio.sleep(5)
-                continue
-            logger.warning("LLM Synthesizer failed, using fallback summary: %s", e)
-            # Fallback formatting từ ToolMessage cuối cùng
+        except Exception as e_fallback:
+            logger.warning("Fallback LLM (%s) also failed in synthesizer: %s. Using heuristic formatting.", settings.GEMINI_FALLBACK_MODEL, e_fallback)
             last_tool_content = None
             for msg in reversed(state.get("messages", [])):
                 if isinstance(msg, ToolMessage):
@@ -388,7 +555,6 @@ async def synthesizer_node(state: ERPAgentState) -> Dict[str, Any]:
                 final_ans = f"Kết quả từ hệ thống ERP:\n\n{last_tool_content}"
             else:
                 final_ans = "Đã xử lý yêu cầu thành công."
-            break
 
     return {
         "answer": final_ans,
