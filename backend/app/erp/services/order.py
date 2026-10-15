@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.errors import NotFoundException, ValidationException
-from app.erp.models import Customer, Product, SalesOrder, SalesOrderItem, IdempotencyKey
+from app.erp.models import Customer, Product, SalesOrder, SalesOrderItem, IdempotencyKey, Inventory, AuditLog
 from app.erp.schemas import OrderDraftCreate
 
 
@@ -62,6 +62,8 @@ class SalesOrderService:
                 code="ORDER_NOT_FOUND",
             )
         return order
+
+    get_by_id = get_order_by_id
 
     @staticmethod
     async def create_order_draft(
@@ -178,4 +180,72 @@ class SalesOrderService:
         await session.commit()
         await session.refresh(order)
 
+        return await SalesOrderService.get_order_by_id(session, order.id)
+
+    @staticmethod
+    async def deliver_order(
+        session: AsyncSession,
+        order_id: uuid.UUID,
+        actor_id: uuid.UUID,
+    ) -> SalesOrder:
+        """
+        Nghiệp vụ xuất kho hoàn tất đơn hàng (Goods Issue / Delivery Flow):
+        - Đơn hàng phải ở trạng thái 'confirmed'.
+        - Trừ tồn kho vật lý (quantity_on_hand) và giải phóng tồn giữ đơn (quantity_reserved).
+        - Cập nhật trạng thái đơn hàng sang 'delivered'.
+        - Ghi nhật ký kiểm toán AuditLog.
+        """
+        order = await SalesOrderService.get_order_by_id(session, order_id)
+
+        if order.status != "confirmed":
+            raise ValidationException(
+                f"Chỉ có thể xuất kho cho đơn hàng ở trạng thái 'confirmed' (Đã duyệt). "
+                f"Trạng thái hiện tại của đơn hàng {order.order_number} là '{order.status}'."
+            )
+
+        # Trừ tồn kho và giải phóng reserved cho từng mặt hàng
+        for item in order.items:
+            inv_stmt = (
+                select(Inventory)
+                .where(Inventory.product_id == item.product_id)
+                .order_by(Inventory.quantity_reserved.desc())
+            )
+            inv_res = await session.execute(inv_stmt)
+            inventories = list(inv_res.scalars().all())
+
+            qty_remaining = item.quantity
+            # Bước 1: Trừ từ kho có reserved trước
+            for inv in inventories:
+                if qty_remaining <= 0:
+                    break
+                deduct = min(inv.quantity_reserved, qty_remaining)
+                if deduct > 0:
+                    inv.quantity_reserved -= deduct
+                    inv.quantity_on_hand -= deduct
+                    qty_remaining -= deduct
+
+            # Bước 2: Nếu chưa đủ (phòng trường hợp reserved ở kho khác hoặc chưa reserved hết)
+            if qty_remaining > 0:
+                for inv in inventories:
+                    if qty_remaining <= 0:
+                        break
+                    deduct = min(inv.quantity_on_hand, qty_remaining)
+                    inv.quantity_on_hand -= deduct
+                    qty_remaining -= deduct
+
+        order.status = "delivered"
+
+        # Ghi nhật ký kiểm toán
+        audit_log = AuditLog(
+            id=uuid.uuid4(),
+            actor_id=actor_id,
+            action="DELIVER_ORDER",
+            resource_type="sales_order",
+            resource_id=str(order.id),
+            result="DELIVERED",
+        )
+        session.add(audit_log)
+
+        await session.commit()
+        await session.refresh(order)
         return await SalesOrderService.get_order_by_id(session, order.id)

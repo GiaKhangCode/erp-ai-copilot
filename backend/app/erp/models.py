@@ -151,6 +151,10 @@ class Customer(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
+    credit_limit: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("50000000"), nullable=False)
+    current_debt: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), nullable=False)
+    phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     sales_orders: Mapped[List["SalesOrder"]] = relationship("SalesOrder", back_populates="customer")
 
@@ -213,7 +217,7 @@ class SalesOrder(Base):
     __tablename__ = "sales_orders"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('draft', 'pending_approval', 'confirmed', 'cancelled')",
+            "status IN ('draft', 'pending_approval', 'confirmed', 'cancelled', 'delivered')",
             name="check_sales_order_status",
         ),
         CheckConstraint("total_amount >= 0", name="check_sales_order_total_amount"),
@@ -331,3 +335,32 @@ class IdempotencyKey(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class StockAdjustment(Base):
+    __tablename__ = "stock_adjustments"
+    __table_args__ = {"schema": "erp"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.products.id"), nullable=False
+    )
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.warehouses.id"), nullable=False
+    )
+    sku: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    warehouse_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    delta_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity_before: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    adjusted_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    product: Mapped["Product"] = relationship("Product")
+    warehouse: Mapped["Warehouse"] = relationship("Warehouse")
+    adjuster: Mapped["User"] = relationship("User")

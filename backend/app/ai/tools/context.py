@@ -9,6 +9,8 @@ class UserContext:
     user_id: Optional[uuid.UUID] = None
     user_role: Optional[str] = None
     user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_permissions: Optional[list] = None
 
 
 # Thread-safe and async-safe context variable for holding current authenticated user info

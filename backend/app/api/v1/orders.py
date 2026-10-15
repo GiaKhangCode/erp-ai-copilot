@@ -1,7 +1,8 @@
 import io
 import uuid
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +18,10 @@ from app.document_ai.extractor import get_order_extractor
 from app.document_ai.ingestion_service import ApprovalService, OrderIngestionService
 from app.document_ai.schemas import OrderIngestionResult
 from app.erp.models import ApprovalRequest, User
+from app.erp.services.order import SalesOrderService
+from app.erp.services.quotation import QuotationService
+from app.erp.services.customer import CustomerService
+from app.erp.schemas import OrderResponse, CustomerCreditCheckResponse
 from app.rag.parser import parse_document
 
 router = APIRouter(tags=["Document AI & Approval Inbox"])
@@ -290,4 +295,128 @@ async def reject_order(
         approver_id=current_user.id,
         reason=reason,
     )
+
+
+@router.post(
+    "/orders/{order_id}/deliver",
+    response_model=OrderResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Thủ kho xác nhận đóng gói và xuất hàng (chuyển sang delivered, trừ kho vật lý)",
+)
+async def deliver_order_endpoint(
+    order_id: uuid.UUID,
+    current_user: User = Depends(require_permission("inventory:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Nghiệp vụ xuất kho dành cho Thủ kho (hoặc Admin):
+    - Đơn hàng phải ở trạng thái 'confirmed'.
+    - Tự động trừ số lượng thực tế trong kho (on_hand) và giải phóng số lượng đang giữ đơn (reserved).
+    - Cập nhật đơn hàng sang trạng thái 'delivered'.
+    """
+    return await SalesOrderService.deliver_order(
+        session=db,
+        order_id=order_id,
+        actor_id=current_user.id,
+    )
+
+
+@router.get(
+    "/orders/{order_id}/quotation/pdf",
+    summary="Xuất file PDF Báo giá kinh doanh (Sales Quotation / Proforma Invoice)",
+)
+async def export_order_quotation_pdf(
+    order_id: uuid.UUID,
+    current_user: User = Depends(require_permission("orders:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Xuất file PDF Báo giá kinh doanh tiêu chuẩn:
+    - Trả về binary stream application/pdf.
+    - Hỗ trợ in trực tiếp hoặc xem trước trong trình duyệt / chat interface.
+    """
+    order = await SalesOrderService.get_order_by_id(db, order_id)
+    pdf_bytes = await QuotationService.generate_pdf(db, order_id)
+
+    filename = f"Bao_Gia_{order.order_number}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "X-Filename": filename,
+        },
+    )
+
+
+@router.get(
+    "/orders/{order_id}/quotation/summary",
+    summary="Lấy thông tin tóm tắt báo giá phục vụ AI Chat Card Widget",
+)
+async def get_order_quotation_summary(
+    order_id: uuid.UUID,
+    current_user: User = Depends(require_permission("orders:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    order = await SalesOrderService.get_order_by_id(db, order_id)
+    items_summary = [
+        {
+            "sku": item.product.sku if item.product else "N/A",
+            "name": item.product.name if item.product else "Sản phẩm",
+            "quantity": item.quantity,
+            "unit_price": float(item.unit_price),
+            "line_total": float(item.line_total),
+        }
+        for item in order.items
+    ]
+    filename = f"Bao_Gia_{order.order_number}.pdf"
+    return {
+        "order_id": str(order.id),
+        "order_number": order.order_number,
+        "customer_id": str(order.customer_id),
+        "customer_name": order.customer.name if order.customer else "N/A",
+        "customer_code": order.customer.code if order.customer else "N/A",
+        "total_amount": float(order.total_amount),
+        "status": order.status,
+        "created_at": order.created_at.isoformat(),
+        "filename": filename,
+        "pdf_url": f"/api/v1/orders/{order.id}/quotation/pdf",
+        "items": items_summary,
+    }
+
+
+@router.get(
+    "/customers/{customer_id_or_code}/credit-check",
+    response_model=CustomerCreditCheckResponse,
+    summary="Kiểm tra hạn mức công nợ và tỷ lệ an toàn tín dụng của khách hàng",
+)
+async def check_customer_credit_limit(
+    customer_id_or_code: str,
+    additional_amount: Optional[float] = Query(0.0, description="Giá trị đơn hàng dự kiến đặt thêm (VND)"),
+    current_user: User = Depends(require_permission("customers:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Kiểm tra hạn mức tín dụng khách hàng:
+    - Tính toán dư nợ hiện tại, hạn mức còn lại và tỷ lệ sử dụng công nợ.
+    - Cảnh báo nếu đơn hàng mới vượt quá hạn mức cho phép.
+    """
+    from decimal import Decimal
+    result = await CustomerService.check_credit_limit(
+        session=db,
+        customer_id_or_code=customer_id_or_code,
+        additional_amount=Decimal(str(additional_amount or 0)),
+    )
+    return CustomerCreditCheckResponse(
+        customer_id=result["customer_id"],
+        customer_code=result["customer_code"],
+        customer_name=result["customer_name"],
+        credit_limit=result["credit_limit"],
+        current_debt=result["current_debt"],
+        available_credit=result["available_credit"],
+        credit_utilization_rate=result["credit_utilization_rate"],
+        is_exceeded=result["is_exceeded"],
+        currency="VND",
+    )
+
 

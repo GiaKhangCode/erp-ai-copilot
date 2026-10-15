@@ -10,6 +10,10 @@ from app.ai.tools.erp_tools import (
     get_sales_orders,
     get_revenue_report,
     propose_sales_order_draft,
+    deliver_sales_order,
+    adjust_inventory,
+    generate_sales_quotation,
+    check_customer_credit,
 )
 from app.ai.tools.rag_tool import search_company_knowledge
 from app.ai.tools.context import (
@@ -27,6 +31,10 @@ ALL_AGENT_TOOLS: List[BaseTool] = [
     get_sales_orders,
     get_revenue_report,
     propose_sales_order_draft,
+    deliver_sales_order,
+    adjust_inventory,
+    generate_sales_quotation,
+    check_customer_credit,
     search_company_knowledge,
 ]
 
@@ -47,6 +55,8 @@ __all__ = [
     "get_sales_orders",
     "get_revenue_report",
     "propose_sales_order_draft",
+    "deliver_sales_order",
+    "adjust_inventory",
     "search_company_knowledge",
     "UserContext",
     "get_current_user_context",

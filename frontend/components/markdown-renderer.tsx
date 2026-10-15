@@ -4,6 +4,7 @@ import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileText, ExternalLink } from "lucide-react";
+import { QuotationFileCard } from "@/components/quotation-file-card";
 
 interface MarkdownRendererProps {
   content: string;
@@ -11,6 +12,67 @@ interface MarkdownRendererProps {
 }
 
 export function MarkdownRenderer({ content, onViewDocument }: MarkdownRendererProps) {
+  // Regex to detect quotation file cards: :::quotation[order_id|order_number|customer_name|total_amount|pdf_url|filename]:::
+  const quotationRegex = /:::quotation\[([^\]]+)\]:::/g;
+
+  if (quotationRegex.test(content)) {
+    quotationRegex.lastIndex = 0;
+    const segments: React.ReactNode[] = [];
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = quotationRegex.exec(content)) !== null) {
+      if (match.index > lastIdx) {
+        segments.push(
+          <MarkdownRendererSub
+            key={`md-${lastIdx}`}
+            content={content.substring(lastIdx, match.index)}
+            onViewDocument={onViewDocument}
+          />
+        );
+      }
+
+      const raw = match[1];
+      const parts = raw.split("|");
+      const orderId = parts[0]?.trim();
+      const orderNumber = parts[1]?.trim() || "Đơn hàng";
+      const customerName = parts[2]?.trim();
+      const totalAmount = parts[3] ? parseFloat(parts[3]) : undefined;
+      const pdfUrl = parts[4]?.trim();
+      const filename = parts[5]?.trim();
+
+      segments.push(
+        <QuotationFileCard
+          key={`quo-${match.index}`}
+          orderId={orderId}
+          orderNumber={orderNumber}
+          customerName={customerName}
+          totalAmount={totalAmount}
+          pdfUrl={pdfUrl}
+          filename={filename}
+        />
+      );
+
+      lastIdx = quotationRegex.lastIndex;
+    }
+
+    if (lastIdx < content.length) {
+      segments.push(
+        <MarkdownRendererSub
+          key={`md-${lastIdx}`}
+          content={content.substring(lastIdx)}
+          onViewDocument={onViewDocument}
+        />
+      );
+    }
+
+    return <div className="space-y-2">{segments}</div>;
+  }
+
+  return <MarkdownRendererSub content={content} onViewDocument={onViewDocument} />;
+}
+
+function MarkdownRendererSub({ content, onViewDocument }: MarkdownRendererProps) {
   // Regex to detect inline citation patterns like:
   // [Nguồn: filename.docx, Trang: 1, Đoạn: 0] or [Nguồn: filename.pdf]
   const renderTextWithCitations = (text: string) => {

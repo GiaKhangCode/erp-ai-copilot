@@ -17,20 +17,46 @@ import {
   ExternalLink,
   Package,
   Layers,
-  DollarSign
+  DollarSign,
+  Truck,
+  Loader2,
+  Printer,
+  CreditCard,
+  AlertTriangle
 } from "lucide-react";
-import { fetchOrders, fetchOrderDetail, fetchCustomers, SalesOrderItem, CustomerItem } from "@/lib/api";
+import { 
+  fetchOrders, 
+  fetchOrderDetail, 
+  fetchCustomers, 
+  deliverOrderApi, 
+  fetchCustomerCreditCheckApi,
+  SalesOrderItem, 
+  CustomerItem,
+  CustomerCreditInfo 
+} from "@/lib/api";
 import { formatVND } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
+import { useToast } from "@/components/toast-provider";
+import { PdfPreviewModal } from "@/components/pdf-preview-modal";
 
 export default function OrdersPage() {
+  const toast = useToast();
+  const { hasPermission, isAdmin } = useAuth();
+  const canDeliver = isAdmin || hasPermission("inventory:write");
+
   const [orders, setOrders] = useState<SalesOrderItem[]>([]);
   const [customerMap, setCustomerMap] = useState<Record<string, CustomerItem>>({});
   const [loading, setLoading] = useState(true);
+  const [deliverLoading, setDeliverLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedOrder, setSelectedOrder] = useState<SalesOrderItem | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [previewPdfOrder, setPreviewPdfOrder] = useState<{ orderId: string; orderNumber: string } | null>(null);
+  const [creditInfo, setCreditInfo] = useState<CustomerCreditInfo | null>(null);
+  const [creditLoading, setCreditLoading] = useState(false);
 
   useEffect(() => {
     fetchCustomers({ limit: 100 })
@@ -72,13 +98,31 @@ export default function OrdersPage() {
 
   const handleSelectOrder = async (orderId: string) => {
     setDetailLoading(true);
+    setCreditInfo(null);
     try {
       const detail = await fetchOrderDetail(orderId);
       setSelectedOrder(detail);
+      const custId = detail.customer_id;
+      if (custId) {
+        setCreditLoading(true);
+        fetchCustomerCreditCheckApi(custId, 0)
+          .then((c) => setCreditInfo(c))
+          .catch(() => setCreditInfo(null))
+          .finally(() => setCreditLoading(false));
+      }
     } catch (err) {
       // Fallback to item in list
       const found = orders.find((o) => o.id === orderId);
-      if (found) setSelectedOrder(found);
+      if (found) {
+        setSelectedOrder(found);
+        if (found.customer_id) {
+          setCreditLoading(true);
+          fetchCustomerCreditCheckApi(found.customer_id, 0)
+            .then((c) => setCreditInfo(c))
+            .catch(() => setCreditInfo(null))
+            .finally(() => setCreditLoading(false));
+        }
+      }
     } finally {
       setDetailLoading(false);
     }
@@ -105,19 +149,46 @@ export default function OrdersPage() {
   const metrics = useMemo(() => {
     const total = orders.length;
     const confirmed = orders.filter((o) => o.status === "confirmed").length;
+    const delivered = orders.filter((o) => o.status === "delivered").length;
     const draft = orders.filter((o) => o.status === "draft").length;
     const totalRevenue = orders
-      .filter((o) => o.status === "confirmed")
+      .filter((o) => o.status === "confirmed" || o.status === "delivered")
       .reduce((sum, o) => sum + (o.total_amount || 0), 0);
-    return { total, confirmed, draft, totalRevenue };
+    return { total, confirmed, delivered, draft, totalRevenue };
   }, [orders]);
+
+  const handleDeliverOrder = async (orderId: string) => {
+    if (!confirm("Xác nhận đóng gói và xuất kho cho đơn hàng này? Tồn kho thực tế sẽ được tự động trừ đi tương ứng.")) {
+      return;
+    }
+    setDeliverLoading(true);
+    try {
+      const updated = await deliverOrderApi(orderId);
+      toast.success("Xuất kho thành công!", `Đơn hàng ${updated.order_number} đã chuyển sang trạng thái Đã xuất kho (Delivered).`);
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: "delivered" } : o)));
+      if (selectedOrder?.id === orderId) {
+        setSelectedOrder((prev) => (prev ? { ...prev, status: "delivered" } : null));
+      }
+    } catch (err: any) {
+      toast.error("Lỗi khi xuất kho", err.message);
+    } finally {
+      setDeliverLoading(false);
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
+      case "delivered":
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+            <Truck className="w-3 h-3 text-emerald-700" />
+            Đã xuất kho
+          </span>
+        );
       case "confirmed":
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+            <CheckCircle2 className="w-3 h-3 text-blue-600" />
             Đã xác nhận
           </span>
         );
@@ -214,12 +285,22 @@ export default function OrdersPage() {
         </div>
 
         <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-2xs flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-            <Clock className="w-4 h-4" />
+          <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-4 h-4" />
           </div>
           <div>
-            <div className="text-[11px] font-medium text-slate-400">Đơn nháp (Chờ xử lý)</div>
-            <div className="text-base font-bold text-amber-600">{metrics.draft} đơn</div>
+            <div className="text-[11px] font-medium text-slate-400">Đã xác nhận</div>
+            <div className="text-base font-bold text-blue-600">{metrics.confirmed} đơn</div>
+          </div>
+        </div>
+
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/90 shadow-2xs flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+            <Truck className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="text-[11px] font-medium text-slate-400">Đã xuất kho</div>
+            <div className="text-base font-bold text-emerald-600">{metrics.delivered} đơn</div>
           </div>
         </div>
 
@@ -239,11 +320,12 @@ export default function OrdersPage() {
       {/* 3. Thanh tìm kiếm và bộ lọc trạng thái */}
       <div className="px-6 pb-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-2">
-          {["all", "draft", "confirmed", "cancelled"].map((st) => {
+          {["all", "draft", "confirmed", "delivered", "cancelled"].map((st) => {
             const labels: Record<string, string> = {
               all: "Tất cả đơn",
               draft: "Đơn nháp",
-              confirmed: "Đã xác nhận",
+              confirmed: "Đã duyệt",
+              delivered: "Đã xuất kho",
               cancelled: "Đã hủy",
             };
             const active = statusFilter === st;
@@ -374,16 +456,45 @@ export default function OrdersPage() {
                           {getStatusBadge(order.status)}
                         </td>
                         <td className="py-3.5 px-4 text-center">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectOrder(order.id);
-                            }}
-                            className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2.5 py-1 rounded-lg transition-colors font-semibold"
-                          >
-                            Chi tiết
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5">
+                            {order.status === "confirmed" && canDeliver && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeliverOrder(order.id);
+                                }}
+                                disabled={deliverLoading}
+                                className="inline-flex items-center gap-1 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg transition-all font-semibold shadow-2xs active:scale-95 disabled:opacity-50"
+                                title="Đóng gói và xuất hàng khỏi kho"
+                              >
+                                <Truck className="w-3 h-3" />
+                                <span>Xuất kho</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewPdfOrder({ orderId: order.id, orderNumber: order.order_number });
+                              }}
+                              className="inline-flex items-center gap-1 text-[11px] bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 px-2 py-1 rounded-lg transition-colors font-semibold"
+                              title="In / Xem trước Báo giá PDF"
+                            >
+                              <Printer className="w-3 h-3 text-rose-600" />
+                              <span className="hidden sm:inline">Báo giá</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectOrder(order.id);
+                              }}
+                              className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2.5 py-1 rounded-lg transition-colors font-semibold"
+                            >
+                              Chi tiết
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -450,6 +561,66 @@ export default function OrdersPage() {
                 </div>
               </div>
 
+              {/* Thẻ Hạn mức công nợ khách hàng (Credit Limit Check) */}
+              {creditLoading ? (
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-400 flex items-center justify-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                  <span>Đang thẩm định công nợ khách hàng...</span>
+                </div>
+              ) : creditInfo ? (
+                <div
+                  className={`p-3 rounded-xl border text-xs space-y-1.5 transition-all ${
+                    creditInfo.is_exceeded
+                      ? "bg-rose-50/90 border-rose-300 text-rose-900"
+                      : creditInfo.credit_utilization_rate >= 80
+                      ? "bg-amber-50/90 border-amber-300 text-amber-900"
+                      : "bg-blue-50/70 border-blue-200 text-blue-900"
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5 shrink-0" />
+                      <span>Hạn mức công nợ khách hàng</span>
+                    </span>
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                        creditInfo.is_exceeded
+                          ? "bg-rose-200 text-rose-800"
+                          : creditInfo.credit_utilization_rate >= 80
+                          ? "bg-amber-200 text-amber-800"
+                          : "bg-blue-200 text-blue-800"
+                      }`}
+                    >
+                      {creditInfo.credit_utilization_rate}% Đã dùng
+                    </span>
+                  </div>
+
+                  <div className="space-y-1 pt-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="opacity-75">Hạn mức cho phép:</span>
+                      <span className="font-semibold">{formatVND(creditInfo.credit_limit)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="opacity-75">Dư nợ hiện tại:</span>
+                      <span className="font-bold">{formatVND(creditInfo.current_debt)}</span>
+                    </div>
+                    <div className="flex justify-between border-t border-current/15 pt-1">
+                      <span className="opacity-75">Khả dụng còn lại:</span>
+                      <span className={`font-bold ${creditInfo.is_exceeded ? "text-rose-700" : "text-emerald-700"}`}>
+                        {formatVND(creditInfo.available_credit)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {creditInfo.is_exceeded && (
+                    <div className="flex items-center gap-1.5 text-[10.5px] font-bold text-rose-700 pt-0.5 border-t border-rose-200">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      <span>Cảnh báo: Khách hàng đã vượt hạn mức tín dụng!</span>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
               {/* Danh sách vật tư / sản phẩm */}
               <div className="space-y-2">
                 <div className="text-xs font-bold text-slate-800 flex items-center justify-between">
@@ -490,10 +661,40 @@ export default function OrdersPage() {
             </div>
 
             {/* Footer hành động */}
-            <div className="p-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-2">
+            <div className="p-3 border-t border-slate-100 bg-slate-50 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setPreviewPdfOrder({ orderId: selectedOrder.id, orderNumber: selectedOrder.order_number })}
+                className="w-full py-2 bg-white hover:bg-rose-50 text-slate-800 hover:text-rose-700 border border-slate-200/90 hover:border-rose-200 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
+              >
+                <Printer className="w-3.5 h-3.5 text-rose-600" />
+                <span>In / Xuất Báo giá (PDF)</span>
+              </button>
+
+              {selectedOrder.status === "confirmed" && canDeliver && (
+                <button
+                  type="button"
+                  onClick={() => handleDeliverOrder(selectedOrder.id)}
+                  disabled={deliverLoading}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  {deliverLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Truck className="w-4 h-4" />
+                  )}
+                  <span>Xác nhận đóng gói & Xuất kho</span>
+                </button>
+              )}
+              {selectedOrder.status === "delivered" && (
+                <div className="w-full py-2 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-emerald-200">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Đơn hàng đã xuất kho hoàn tất</span>
+                </div>
+              )}
               <Link
                 href={`/copilot?q=Kiểm tra chi tiết đơn hàng ${selectedOrder.order_number}`}
-                className="flex-1 text-center py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+                className="w-full text-center py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Hỏi AI về đơn này</span>
@@ -502,6 +703,14 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
+
+      {/* PDF Quotation Preview Modal */}
+      <PdfPreviewModal
+        isOpen={!!previewPdfOrder}
+        onClose={() => setPreviewPdfOrder(null)}
+        orderId={previewPdfOrder?.orderId}
+        orderNumber={previewPdfOrder?.orderNumber}
+      />
     </div>
   );
 }

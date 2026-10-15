@@ -11,11 +11,27 @@ class CustomerBase(BaseModel):
     name: str
     email: Optional[str] = None
     status: str = "active"
+    credit_limit: Decimal = Field(default=Decimal("50000000"))
+    current_debt: Decimal = Field(default=Decimal("0"))
+    phone: Optional[str] = None
+    address: Optional[str] = None
 
 
 class CustomerResponse(CustomerBase):
     id: UUID
     model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerCreditCheckResponse(BaseModel):
+    customer_id: UUID
+    customer_code: str
+    customer_name: str
+    credit_limit: Decimal
+    current_debt: Decimal
+    available_credit: Decimal
+    credit_utilization_rate: float
+    is_exceeded: bool
+    currency: str = "VND"
 
 
 # Product schemas
@@ -126,3 +142,24 @@ class RevenueReportResponse(BaseModel):
     total_revenue: Decimal
     total_orders: int
     breakdown: List[RevenueReportItem] = []
+
+
+# Stock Adjustment Schemas
+class StockAdjustmentCreate(BaseModel):
+    sku: str = Field(..., min_length=1, description="Mã SKU sản phẩm cần điều chỉnh")
+    warehouse_code: str = Field(..., min_length=1, description="Mã kho (ví dụ: WH-HN, WH-HCM)")
+    delta_quantity: int = Field(..., description="Số lượng tăng (+) hoặc giảm (-)")
+    reason: str = Field(..., min_length=3, max_length=500, description="Lý do điều chỉnh kiểm kê")
+
+
+class StockAdjustmentResponse(BaseModel):
+    id: UUID
+    sku: str
+    warehouse_code: str
+    delta_quantity: int
+    quantity_before: int
+    quantity_after: int
+    reason: str
+    adjusted_by: UUID
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)

@@ -23,6 +23,10 @@ from app.ai.tools import (
     get_sales_orders,
     get_revenue_report,
     propose_sales_order_draft,
+    deliver_sales_order,
+    adjust_inventory,
+    generate_sales_quotation,
+    check_customer_credit,
     search_company_knowledge,
 )
 from app.ai.prompts.agent_prompts import (
@@ -35,7 +39,7 @@ from app.ai.prompts.agent_prompts import (
 
 logger = logging.getLogger(__name__)
 
-# Danh sách read-only ERP Domain tools
+# Danh sách ERP Domain tools
 ERP_READ_TOOLS = [
     get_inventory,
     get_product,
@@ -44,6 +48,10 @@ ERP_READ_TOOLS = [
     list_customers,
     get_sales_orders,
     get_revenue_report,
+    deliver_sales_order,
+    adjust_inventory,
+    generate_sales_quotation,
+    check_customer_credit,
 ]
 
 
@@ -172,6 +180,8 @@ async def super_tools_node(state: ERPAgentState) -> Dict[str, Any]:
         "get_sales_orders": ("Tra cứu đơn hàng", "Kiểm tra lịch sử giao dịch"),
         "get_revenue_report": ("Báo cáo doanh thu", "Trích xuất số liệu tài chính"),
         "propose_sales_order_draft": ("Đề xuất tạo đơn nháp (HITL)", "Khởi tạo bản nháp đơn hàng chờ phê duyệt"),
+        "deliver_sales_order": ("Xuất kho đơn hàng", "Trừ tồn kho vật lý và hoàn tất giao hàng"),
+        "adjust_inventory": ("Điều chỉnh tồn kho", "Lập phiếu kiểm kê và cập nhật số lượng tồn"),
     }
 
     if messages:

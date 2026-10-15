@@ -1,3 +1,5 @@
+import uuid
+from decimal import Decimal
 from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +21,85 @@ class CustomerService:
                 code="CUSTOMER_NOT_FOUND",
             )
         return customer
+
+    @staticmethod
+    async def get_by_id(session: AsyncSession, customer_id) -> Customer:
+        stmt = select(Customer).where(Customer.id == customer_id)
+        result = await session.execute(stmt)
+        customer = result.scalar_one_or_none()
+        if not customer:
+            raise NotFoundException(
+                f"Không tìm thấy khách hàng với ID '{customer_id}'",
+                code="CUSTOMER_NOT_FOUND",
+            )
+        return customer
+
+    @staticmethod
+    async def check_credit_limit(
+        session: AsyncSession,
+        customer_id_or_code: str,
+        additional_amount: Optional[Decimal] = Decimal("0"),
+    ) -> dict:
+        """Kiểm tra hạn mức công nợ và tỷ lệ sử dụng tín dụng của khách hàng."""
+        query_str = str(customer_id_or_code).strip()
+        customer = None
+
+        # 1. Thử theo UUID
+        try:
+            cust_uuid = uuid.UUID(query_str)
+            stmt = select(Customer).where(Customer.id == cust_uuid)
+            res = await session.execute(stmt)
+            customer = res.scalar_one_or_none()
+        except ValueError:
+            pass
+
+        # 2. Thử theo Code chính xác hoặc không phân biệt hoa thường
+        if not customer:
+            stmt = select(Customer).where(Customer.code.ilike(query_str))
+            res = await session.execute(stmt)
+            customer = res.scalar_one_or_none()
+
+        # 3. Thử chuẩn hóa mã code (ví dụ: CUS-001 -> CUS-0001)
+        if not customer and query_str.upper().startswith("CUS-"):
+            parts = query_str.split("-")
+            if len(parts) == 2 and parts[1].isdigit():
+                padded_code = f"CUS-{int(parts[1]):04d}"
+                stmt = select(Customer).where(Customer.code == padded_code)
+                res = await session.execute(stmt)
+                customer = res.scalar_one_or_none()
+
+        # 4. Thử tìm theo tên khách hàng
+        if not customer:
+            stmt = select(Customer).where(Customer.name.ilike(f"%{query_str}%"))
+            res = await session.execute(stmt)
+            customer = res.scalar_one_or_none()
+
+        if not customer:
+            raise NotFoundException(
+                f"Không tìm thấy khách hàng: '{query_str}'",
+                code="CUSTOMER_NOT_FOUND",
+            )
+
+        limit = Decimal(str(customer.credit_limit or 50000000))
+        debt = Decimal(str(customer.current_debt or 0))
+        new_debt = debt + Decimal(str(additional_amount or 0))
+        available = limit - new_debt
+        utilization = float(new_debt / limit * 100) if limit > 0 else 100.0
+        is_exceeded = new_debt > limit
+
+        return {
+            "customer_id": customer.id,
+            "customer_code": customer.code,
+            "customer_name": customer.name,
+            "credit_limit": limit,
+            "current_debt": debt,
+            "additional_amount": Decimal(str(additional_amount or 0)),
+            "projected_debt": new_debt,
+            "available_credit": available,
+            "credit_utilization_rate": round(utilization, 2),
+            "is_exceeded": is_exceeded,
+            "status": "EXCEEDED" if is_exceeded else "GOOD",
+        }
 
     @staticmethod
     async def list_customers(

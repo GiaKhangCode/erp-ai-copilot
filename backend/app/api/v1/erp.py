@@ -18,6 +18,8 @@ from app.erp.schemas import (
     OrderDraftCreate,
     OrderResponse,
     RevenueReportResponse,
+    StockAdjustmentCreate,
+    StockAdjustmentResponse,
 )
 from app.erp.services import (
     CustomerService,
@@ -95,6 +97,47 @@ async def get_inventory(
     Trả về số lượng tồn kho (on_hand), số lượng đang giữ (reserved) và số lượng khả dụng (available).
     """
     return await InventoryService.get_inventory(db, sku=sku, warehouse_code=warehouse_code)
+
+
+@router.post("/inventory/adjust", response_model=StockAdjustmentResponse, status_code=status.HTTP_201_CREATED)
+async def adjust_inventory(
+    payload: StockAdjustmentCreate,
+    current_user: User = Depends(require_permission("inventory:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Tạo phiếu kiểm kê và điều chỉnh tồn kho thực tế.
+    Yêu cầu quyền 'inventory:write' (thủ kho hoặc admin).
+    """
+    return await InventoryService.adjust_inventory(
+        session=db,
+        sku=payload.sku,
+        warehouse_code=payload.warehouse_code,
+        delta_quantity=payload.delta_quantity,
+        reason=payload.reason,
+        user_id=current_user.id,
+    )
+
+
+@router.get("/inventory/adjustments", response_model=List[StockAdjustmentResponse])
+async def list_inventory_adjustments(
+    sku: Optional[str] = Query(None, description="Lọc theo mã SKU"),
+    warehouse_code: Optional[str] = Query(None, description="Lọc theo mã kho"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(require_permission("inventory:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lấy danh sách lịch sử các phiếu kiểm kê điều chỉnh tồn kho.
+    """
+    return await InventoryService.list_adjustments(
+        session=db,
+        sku=sku,
+        warehouse_code=warehouse_code,
+        limit=limit,
+        offset=offset,
+    )
 
 
 # ==========================================
