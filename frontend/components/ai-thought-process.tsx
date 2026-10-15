@@ -34,45 +34,68 @@ export function AiThoughtProcess({
     isStreaming || thoughtSteps.some((s) => s.status === "running");
 
   const getStepIcon = (step: string) => {
-    switch (step) {
-      case "intent":
-        return <Brain className="w-3.5 h-3.5 text-blue-600 shrink-0" />;
-      case "db":
-        return <Database className="w-3.5 h-3.5 text-sky-600 shrink-0" />;
-      case "rag":
-        return <FileSearch className="w-3.5 h-3.5 text-violet-600 shrink-0" />;
-      case "draft":
-        return <PackageCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />;
-      case "synthesis":
-        return <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />;
-      default:
-        return <Workflow className="w-3.5 h-3.5 text-slate-500 shrink-0" />;
+    if (step === "intent" || step === "super_agent") {
+      return <Brain className="w-3.5 h-3.5 text-blue-600 shrink-0" />;
     }
+    if (step.includes("knowledge") || step === "rag") {
+      return <FileSearch className="w-3.5 h-3.5 text-violet-600 shrink-0" />;
+    }
+    if (step.includes("draft") || step.includes("propose")) {
+      return <PackageCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />;
+    }
+    if (
+      step.includes("inventory") ||
+      step.includes("product") ||
+      step.includes("customer") ||
+      step.includes("sales") ||
+      step.includes("revenue") ||
+      step === "db"
+    ) {
+      return <Database className="w-3.5 h-3.5 text-sky-600 shrink-0" />;
+    }
+    if (step === "synthesis") {
+      return <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />;
+    }
+    return <Workflow className="w-3.5 h-3.5 text-slate-500 shrink-0" />;
   };
 
   const getStepTag = (step: string) => {
-    switch (step) {
-      case "db":
-        return (
-          <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/80 px-1.5 py-0.2 rounded-md">
-            Cơ sở dữ liệu ERP
-          </span>
-        );
-      case "rag":
-        return (
-          <span className="text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200/80 px-1.5 py-0.2 rounded-md">
-            Tài liệu nội bộ
-          </span>
-        );
-      case "draft":
-        return (
-          <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded-md">
-            Đề xuất HITL
-          </span>
-        );
-      default:
-        return null;
+    if (step.includes("knowledge") || step === "rag") {
+      return (
+        <span className="text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200/80 px-1.5 py-0.2 rounded-md">
+          Tài liệu nội bộ (RAG)
+        </span>
+      );
     }
+    if (step.includes("draft") || step.includes("propose")) {
+      return (
+        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded-md">
+          Đề xuất HITL
+        </span>
+      );
+    }
+    if (
+      step.includes("inventory") ||
+      step.includes("product") ||
+      step.includes("customer") ||
+      step.includes("sales") ||
+      step.includes("revenue") ||
+      step === "db"
+    ) {
+      return (
+        <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/80 px-1.5 py-0.2 rounded-md">
+          Cơ sở dữ liệu ERP
+        </span>
+      );
+    }
+    if (step === "super_agent") {
+      return (
+        <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/80 px-1.5 py-0.2 rounded-md">
+          Điều phối ReAct
+        </span>
+      );
+    }
+    return null;
   };
 
   return (

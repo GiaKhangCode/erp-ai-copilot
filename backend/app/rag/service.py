@@ -136,8 +136,12 @@ class DocumentService:
         limit: int = 50,
         status: Optional[str] = None,
         access_scope: Optional[str] = None,
+        user_id: Optional[uuid.UUID] = None,
+        is_admin: bool = False,
+        can_read_confidential: bool = False,
     ) -> Tuple[List[Document], int]:
-        """List documents with pagination and optional filters."""
+        """List documents with pagination, filters and ACL scoping."""
+        from sqlalchemy import or_
         query = select(Document).options(selectinload(Document.chunks))
         count_query = select(func.count(Document.id))
 
@@ -148,6 +152,19 @@ class DocumentService:
         if access_scope:
             query = query.where(Document.access_scope == access_scope)
             count_query = count_query.where(Document.access_scope == access_scope)
+
+        # ACL Scoping: Người không có quyền confidential và không phải admin chỉ xem public, internal hoặc tài liệu của chính mình
+        if not is_admin and not can_read_confidential:
+            if user_id:
+                acl_filter = or_(
+                    Document.access_scope.in_(["public", "internal"]),
+                    Document.owner_id == user_id,
+                )
+            else:
+                acl_filter = Document.access_scope == "public"
+
+            query = query.where(acl_filter)
+            count_query = count_query.where(acl_filter)
 
         total_res = await session.execute(count_query)
         total = total_res.scalar() or 0
@@ -176,11 +193,17 @@ class DocumentService:
         self,
         session: AsyncSession,
         document_id: uuid.UUID,
+        actor_id: Optional[uuid.UUID] = None,
+        is_admin: bool = False,
     ) -> bool:
-        """Delete document from storage and database (cascades chunks)."""
+        """Delete document from storage and database (cascades chunks) with ownership check."""
         doc = await self.get_document(session, document_id)
         if not doc:
             return False
+
+        # Kiểm tra quyền sở hữu (BOLA/IDOR protection)
+        if not is_admin and actor_id and doc.owner_id != actor_id:
+            raise PermissionError("Chỉ người tải lên tài liệu hoặc Quản trị viên mới được phép xóa tài liệu này.")
 
         # Delete physical file from MinIO
         try:

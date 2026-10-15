@@ -157,10 +157,13 @@ class ApprovalService:
         status: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        requested_by: Optional[uuid.UUID] = None,
     ) -> List[ApprovalRequest]:
         stmt = select(ApprovalRequest)
         if status:
             stmt = stmt.where(ApprovalRequest.status == status)
+        if requested_by:
+            stmt = stmt.where(ApprovalRequest.requested_by == requested_by)
         stmt = stmt.order_by(ApprovalRequest.created_at.desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())
@@ -194,6 +197,14 @@ class ApprovalService:
                 f"Yêu cầu phê duyệt này đã ở trạng thái '{req.status}', không thể duyệt lại."
             )
 
+        # Kiểm tra Nguyên tắc 4 mắt (Four-Eyes Principle / Segregation of Duties)
+        if req.requested_by == approver_id:
+            raise ValidationException(
+                "Vi phạm nguyên tắc phân tách trách nhiệm (Four-Eyes Principle): "
+                "Người lập yêu cầu không được phép tự phê duyệt đơn hàng của chính mình. "
+                "Yêu cầu phải được một cấp quản lý khác xem xét và phê duyệt."
+            )
+
         # Lấy đơn hàng liên quan
         stmt = (
             select(SalesOrder)
@@ -216,6 +227,11 @@ class ApprovalService:
             inv_res = await session.execute(inv_stmt)
             inv = inv_res.scalar_one_or_none()
             if inv:
+                if inv.quantity_reserved + item.quantity > inv.quantity_on_hand:
+                    raise ValidationException(
+                        f"Không đủ tồn kho khả dụng để phê duyệt đơn hàng. "
+                        f"Tồn kho thực tế: {inv.quantity_on_hand}, đã giữ chỗ: {inv.quantity_reserved}, cần giữ thêm: {item.quantity}."
+                    )
                 inv.quantity_reserved += item.quantity
 
         # Ghi Audit Log

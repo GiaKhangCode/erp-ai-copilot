@@ -1,34 +1,34 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { 
-  Sparkles, 
-  Send, 
-  Mic, 
-  BarChart2, 
-  FileText, 
-  Cog, 
-  Lightbulb, 
-  DollarSign, 
-  Package, 
-  ShoppingCart, 
-  TrendingUp, 
+import {
+  Sparkles,
+  Send,
+  Mic,
+  BarChart2,
+  FileText,
+  Cog,
+  Lightbulb,
+  DollarSign,
+  Package,
+  ShoppingCart,
+  TrendingUp,
   ArrowRight,
   Users,
-  Loader2
+  Loader2,
 } from "lucide-react";
 import { formatVND, formatNumber } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
-import { 
-  fetchRevenueReport, 
-  fetchInventory, 
-  fetchOrders, 
+import {
+  fetchRevenueReport,
+  fetchInventory,
+  fetchOrders,
   fetchCustomers,
   RevenueReportData,
   InventoryItem,
   SalesOrderItem,
-  CustomerItem
+  CustomerItem,
 } from "@/lib/api";
 
 const promptChips = [
@@ -41,7 +41,8 @@ const promptChips = [
 const featureCards = [
   {
     title: "Tóm tắt báo cáo",
-    description: "Nhận bản tóm tắt nhanh chóng về hiệu suất kinh doanh, tài chính, tồn kho...",
+    description:
+      "Nhận bản tóm tắt nhanh chóng về hiệu suất kinh doanh, tài chính, tồn kho...",
     icon: BarChart2,
     iconColor: "text-blue-500",
     bgColor: "bg-blue-50",
@@ -49,7 +50,8 @@ const featureCards = [
   },
   {
     title: "Truy vấn dữ liệu",
-    description: "Hỏi đáp trực tiếp về dữ liệu ERP và chính sách tài liệu qua ngôn ngữ tự nhiên.",
+    description:
+      "Hỏi đáp trực tiếp về dữ liệu ERP và chính sách tài liệu qua ngôn ngữ tự nhiên.",
     icon: FileText,
     iconColor: "text-emerald-500",
     bgColor: "bg-emerald-50",
@@ -57,7 +59,8 @@ const featureCards = [
   },
   {
     title: "Tự động hóa tác vụ",
-    description: "Bóc tách đơn hàng từ email, trích xuất dữ liệu và phê duyệt đơn nháp.",
+    description:
+      "Bóc tách đơn hàng từ email, trích xuất dữ liệu và phê duyệt đơn nháp.",
     icon: Cog,
     iconColor: "text-purple-500",
     bgColor: "bg-purple-50",
@@ -65,7 +68,8 @@ const featureCards = [
   },
   {
     title: "Kiểm soát tồn kho",
-    description: "Tra cứu tồn kho thời gian thực, số lượng khả dụng và cảnh báo thiếu hàng.",
+    description:
+      "Tra cứu tồn kho thời gian thực, số lượng khả dụng và cảnh báo thiếu hàng.",
     icon: Lightbulb,
     iconColor: "text-amber-500",
     bgColor: "bg-amber-50",
@@ -79,8 +83,13 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
 
   // Real KPI metrics state
-  const [revenueData, setRevenueData] = useState<RevenueReportData | null>(null);
-  const [totalInventory, setTotalInventory] = useState<{ onHand: number; available: number }>({ onHand: 0, available: 0 });
+  const [revenueData, setRevenueData] = useState<RevenueReportData | null>(
+    null,
+  );
+  const [totalInventory, setTotalInventory] = useState<{
+    onHand: number;
+    available: number;
+  }>({ onHand: 0, available: 0 });
   const [orderCount, setOrderCount] = useState<number>(0);
   const [customerCount, setCustomerCount] = useState<number>(0);
 
@@ -100,8 +109,14 @@ export default function HomePage() {
         }
         if (invRes.status === "fulfilled") {
           const invList = invRes.value;
-          const onHand = invList.reduce((acc, it) => acc + (it.quantity_on_hand || 0), 0);
-          const available = invList.reduce((acc, it) => acc + (it.quantity_available || 0), 0);
+          const onHand = invList.reduce(
+            (acc, it) => acc + (it.quantity_on_hand || 0),
+            0,
+          );
+          const available = invList.reduce(
+            (acc, it) => acc + (it.quantity_available || 0),
+            0,
+          );
           setTotalInventory({ onHand, available });
         }
         if (ordersRes.status === "fulfilled") {
@@ -120,14 +135,49 @@ export default function HomePage() {
     loadDashboardKpis();
   }, []);
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Tự động co giãn chiều cao của ô nhập prompt theo nội dung
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      if (query) {
+        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
+      }
+    }
+  }, [query]);
+
   const handleChipClick = (prompt: string) => {
     setQuery(prompt);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
+  const handleSendMessage = () => {
+    if (!query.trim()) return;
+    window.location.href = `/copilot?q=${encodeURIComponent(query.trim())}`;
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
-    window.location.href = `/copilot?q=${encodeURIComponent(query.trim())}`;
+    handleSendMessage();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter") {
+      if (!e.shiftKey) {
+        e.preventDefault();
+        handleSendMessage();
+      } else {
+        requestAnimationFrame(() => {
+          if (textareaRef.current) {
+            textareaRef.current.style.height = "auto";
+            textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
+          }
+        });
+      }
+    }
   };
 
   // Lấy tên hiển thị chào mừng
@@ -142,39 +192,54 @@ export default function HomePage() {
             Chào bạn, {firstName}!
           </h1>
           <p className="text-slate-600 max-w-xl mx-auto text-base">
-            Tôi là ERP AI Copilot – trợ lý thông minh giúp bạn tra cứu, phân tích dữ liệu và thực hiện các tác vụ ERP nhanh chóng, dễ dàng hơn.
+            Tôi là ERP AI Copilot – trợ lý thông minh giúp bạn tra cứu, phân
+            tích dữ liệu và thực hiện các tác vụ ERP nhanh chóng, dễ dàng hơn.
           </p>
         </div>
 
         {/* 2. Hero AI Chat Input Box */}
         <div className="max-w-3xl mx-auto space-y-4">
-          <form 
+          <form
             onSubmit={handleSubmit}
-            className="relative bg-white border border-slate-200 rounded-full shadow-lg shadow-blue-500/5 hover:border-slate-300 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 transition-all flex items-center p-2 pl-6"
+            className="relative bg-white border border-slate-200/90 rounded-2xl md:rounded-3xl shadow-lg shadow-blue-500/5 hover:border-slate-300 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10 transition-all p-3 sm:p-3.5 pl-4 sm:pl-5 flex flex-col gap-2.5"
           >
-            <Sparkles className="w-5 h-5 text-blue-500 shrink-0 mr-3" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Hỏi tôi bất cứ điều gì về ERP (VD: doanh thu tháng, tồn kho SKU, tạo đơn hàng...)"
-              className="w-full bg-transparent text-slate-900 placeholder:text-slate-400 text-base focus:outline-none"
-            />
-            <div className="flex items-center gap-2 pr-1">
-              <button
-                type="button"
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors"
-                title="Nhập giọng nói"
-              >
-                <Mic className="w-5 h-5" />
-              </button>
-              <button
-                type="submit"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-full font-medium flex items-center gap-2 shadow-md shadow-blue-600/20 transition-all shrink-0 active:scale-95 cursor-pointer"
-              >
-                <Send className="w-4 h-4" />
-                <span>Gửi</span>
-              </button>
+            {/* Top Textarea Row */}
+            <div className="flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-blue-500 shrink-0 mt-1" />
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Hỏi tôi bất cứ điều gì về ERP (VD: doanh thu tháng, tồn kho SKU, tạo đơn hàng...)"
+                className="w-full bg-transparent text-slate-900 placeholder:text-slate-400 text-sm sm:text-base focus:outline-none resize-none leading-relaxed min-h-[28px] max-h-44 py-0.5 overflow-y-auto"
+              />
+            </div>
+
+            {/* Bottom Actions Row */}
+            <div className="flex items-center justify-end pt-2 border-t border-slate-100/90">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="Nhập giọng nói"
+                >
+                  <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
+                <button
+                  type="submit"
+                  disabled={!query.trim()}
+                  title="Gửi"
+                  className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shadow-md transition-all shrink-0 active:scale-95 cursor-pointer ${
+                    query.trim()
+                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/20"
+                      : "bg-slate-100 text-slate-400 cursor-not-allowed shadow-none"
+                  }`}
+                >
+                  <Send className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                </button>
+              </div>
             </div>
           </form>
 
@@ -204,7 +269,9 @@ export default function HomePage() {
                 className="bg-white border border-slate-200/90 rounded-2xl p-5 hover:border-blue-400 hover:shadow-md transition-all duration-200 group flex flex-col justify-between"
               >
                 <div className="space-y-3">
-                  <div className={`w-10 h-10 rounded-xl ${card.bgColor} flex items-center justify-center`}>
+                  <div
+                    className={`w-10 h-10 rounded-xl ${card.bgColor} flex items-center justify-center`}
+                  >
                     <Icon className={`w-5 h-5 ${card.iconColor}`} />
                   </div>
                   <h3 className="font-bold text-slate-900 text-base group-hover:text-blue-600 transition-colors">
@@ -233,7 +300,10 @@ export default function HomePage() {
                 Đồng bộ trực tiếp
               </span>
             </div>
-            <Link href="/reports" className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+            <Link
+              href="/reports"
+              className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+            >
               <span>Xem báo cáo chi tiết</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
@@ -255,11 +325,15 @@ export default function HomePage() {
                   <div className="h-7 w-32 bg-slate-100 rounded animate-pulse" />
                 ) : (
                   <div className="text-xl font-extrabold text-slate-900">
-                    {revenueData?.total_revenue ? formatVND(Number(revenueData.total_revenue)) : "0 đ"}
+                    {revenueData?.total_revenue
+                      ? formatVND(Number(revenueData.total_revenue))
+                      : "0 đ"}
                   </div>
                 )}
                 <div className="text-xs font-medium text-emerald-600">
-                  {revenueData?.total_orders ? `${revenueData.total_orders} đơn đã đối chiếu` : "Chưa có đơn hoàn tất"}
+                  {revenueData?.total_orders
+                    ? `${revenueData.total_orders} đơn đã đối chiếu`
+                    : "Chưa có đơn hoàn tất"}
                 </div>
               </div>
             </div>

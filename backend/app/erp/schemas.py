@@ -86,6 +86,12 @@ class UserResponse(BaseModel):
     full_name: str
     role: str
     is_active: bool
+    phone: Optional[str] = None
+    department: Optional[str] = None
+    job_title: Optional[str] = None
+    is_superuser: bool = False
+    roles: List[str] = []
+    permissions: List[str] = []
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -94,10 +100,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
+    expires_in: Optional[int] = None
     user: UserResponse
+
 
 
 # Reporting Schemas

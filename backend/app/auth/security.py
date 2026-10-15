@@ -41,3 +41,30 @@ def decode_access_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+def hash_token(token: str) -> str:
+    """Băm token (refresh token) bằng SHA-256 để lưu trữ an toàn trong CSDL."""
+    import hashlib
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_refresh_token(data: dict, expires_days: int = 7) -> tuple[str, str, datetime]:
+    """
+    Tạo Refresh Token (JWT dài hạn).
+    Trả về: (raw_refresh_token, sha256_hash, expires_at_utc)
+    Bổ sung claim jti ngẫu nhiên để đảm bảo tính duy nhất tuyệt đối.
+    """
+    import uuid
+    to_encode = data.copy()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
+    to_encode.update({
+        "jti": str(uuid.uuid4()),
+        "exp": expires_at,
+        "type": "refresh",
+    })
+    raw_token = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+    token_hash = hash_token(raw_token)
+    return raw_token, token_hash, expires_at
+
+

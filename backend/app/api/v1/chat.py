@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -28,7 +28,9 @@ from app.ai.agents.graph import (
     rag_agent_node,
     draft_order_agent_node,
 )
+from app.ai.tools import ALL_AGENT_TOOLS
 from app.ai.prompts.agent_prompts import (
+    SUPER_AGENT_SYSTEM_PROMPT,
     CHITCHAT_SYSTEM_PROMPT,
     SYNTHESIZER_SYSTEM_PROMPT,
 )
@@ -156,19 +158,37 @@ async def chat_with_agent(
     await db.commit()
 
     # Xây dựng luồng suy nghĩ tóm tắt
-    intent_map = {
-        "erp_query": ("Truy vấn cơ sở dữ liệu ERP", "Đã kết nối PostgreSQL và trích xuất số liệu thành công"),
-        "erp_data_query": ("Truy vấn cơ sở dữ liệu ERP", "Đã kết nối PostgreSQL và trích xuất số liệu thành công"),
-        "document_qa": ("Tra cứu tài liệu nội bộ (RAG)", f"Đã tìm kiếm và đối chiếu {len(citations)} nguồn tài liệu quy chế"),
-        "create_order_draft": ("Lập đơn hàng nháp", "Đã kiểm tra tồn kho và tạo đề xuất đơn hàng nháp (Human-in-the-Loop)"),
-        "chitchat": ("Xử lý hội thoại", "Phản hồi câu hỏi thông thường"),
-    }
-    action_title, action_detail = intent_map.get(intent or "", ("Xử lý yêu cầu", "Đã xử lý thông tin nghiệp vụ"))
-    thought_steps = [
-        ThoughtStep(step="intent", title="Phân tích yêu cầu", detail=f"Xác định loại câu hỏi: {action_title}", status="completed"),
-        ThoughtStep(step="execution", title=action_title, detail=action_detail, status="completed"),
-        ThoughtStep(step="synthesis", title="Tổng hợp kết quả", detail="Đã định dạng câu trả lời hoàn tất", status="completed"),
-    ]
+    raw_thought_steps = final_state.get("thought_steps", [])
+    if raw_thought_steps:
+        thought_steps = [
+            ThoughtStep(step="intent", title="Phân tích yêu cầu", detail="Xác định loại câu hỏi và lập kế hoạch ReAct", status="completed"),
+        ]
+        for ts in raw_thought_steps:
+            thought_steps.append(
+                ThoughtStep(
+                    step=ts.get("step", "tool"),
+                    title=ts.get("title", "Thực thi công cụ"),
+                    detail=ts.get("detail", ""),
+                    status=ts.get("status", "completed"),
+                )
+            )
+        thought_steps.append(
+            ThoughtStep(step="synthesis", title="Tổng hợp kết quả", detail="Đã tổng hợp toàn diện câu trả lời", status="completed")
+        )
+    else:
+        intent_map = {
+            "erp_query": ("Truy vấn cơ sở dữ liệu ERP", "Đã kết nối PostgreSQL và trích xuất số liệu thành công"),
+            "erp_data_query": ("Truy vấn cơ sở dữ liệu ERP", "Đã kết nối PostgreSQL và trích xuất số liệu thành công"),
+            "document_qa": ("Tra cứu tài liệu nội bộ (RAG)", f"Đã tìm kiếm và đối chiếu {len(citations)} nguồn tài liệu quy chế"),
+            "create_order_draft": ("Lập đơn hàng nháp", "Đã kiểm tra tồn kho và tạo đề xuất đơn hàng nháp (Human-in-the-Loop)"),
+            "chitchat": ("Xử lý hội thoại", "Phản hồi câu hỏi thông thường"),
+        }
+        action_title, action_detail = intent_map.get(intent or "", ("Xử lý yêu cầu", "Đã xử lý thông tin nghiệp vụ"))
+        thought_steps = [
+            ThoughtStep(step="intent", title="Phân tích yêu cầu", detail=f"Xác định loại câu hỏi: {action_title}", status="completed"),
+            ThoughtStep(step="execution", title=action_title, detail=action_detail, status="completed"),
+            ThoughtStep(step="synthesis", title="Tổng hợp kết quả", detail="Đã định dạng câu trả lời hoàn tất", status="completed"),
+        ]
 
     return ChatResponse(
         conversation_id=conv_id,
@@ -332,185 +352,210 @@ async def chat_with_agent_stream(
                 full_answer = default_msg
                 yield f"data: {json.dumps({'type': 'token', 'content': default_msg})}\n\n"
 
-        elif intent == "document_qa":
-            t_rag = add_thought("rag", "Tra cứu tài liệu nội bộ (RAG)", "Đang đối chiếu quy định trong kho tài liệu chính sách doanh nghiệp...", "running")
-            yield f"data: {json.dumps({'type': 'thought', **t_rag})}\n\n"
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Đang tìm kiếm thông tin trong cơ sở tri thức RAG...'})}\n\n"
-            rag_res = await rag_agent_node(state)
-            state.update(rag_res)
-            citations = state.get("citations", [])
+        else:
+            # ReAct Super-Agent: Hỗ trợ đa tác vụ liên hoàn (RAG + ERP Catalog + Inventory + Sales Orders + Revenue + Draft Order)
+            t_react = add_thought("super_agent", "Lập kế hoạch & Điều phối", "Đang phân tích các tác vụ và điều phối chuỗi công cụ...", "running")
+            yield f"data: {json.dumps({'type': 'thought', **t_react})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'message': 'AI Copilot đang phân tích và điều phối công cụ...'})}\n\n"
 
-            cit_summary = f"Đã tìm thấy {len(citations)} đoạn trích dẫn đối chiếu từ tài liệu nội bộ" if citations else "Đã hoàn thành rà soát kho tài liệu quy định"
-            t_rag = add_thought("rag", "Tra cứu tài liệu nội bộ (RAG)", cit_summary, "completed")
-            yield f"data: {json.dumps({'type': 'thought', **t_rag})}\n\n"
+            messages: List[BaseMessage] = [
+                SystemMessage(content=SUPER_AGENT_SYSTEM_PROMPT),
+                HumanMessage(content=clean_message),
+            ]
+            tools_by_name = {tool.name: tool for tool in ALL_AGENT_TOOLS}
+            tool_results = []
+            max_iterations = 6
+            iteration = 0
+            agent_answered = False
 
-            t_syn = add_thought("synthesis", "Tổng hợp câu trả lời", "Đang trích xuất nội dung và đối chiếu nguồn tài liệu...", "running")
+            tool_meta = {
+                "search_company_knowledge": ("Tra cứu tài liệu nội bộ (RAG)", "Đang tra cứu cẩm nang và chính sách..."),
+                "get_inventory": ("Kiểm tra tồn kho", "Đang kiểm tra số lượng tồn kho khả dụng..."),
+                "get_product": ("Tra cứu thông tin sản phẩm", "Đang lấy thông số và đơn giá niêm yết..."),
+                "list_products": ("Tìm kiếm danh mục sản phẩm", "Đang tra cứu danh mục mặt hàng..."),
+                "get_customer": ("Xác minh khách hàng", "Đang kiểm tra thông tin khách hàng..."),
+                "list_customers": ("Tìm kiếm khách hàng", "Đang tìm kiếm đối tác trong hệ thống..."),
+                "get_sales_orders": ("Tra cứu đơn hàng bán", "Đang tải lịch sử giao dịch đơn hàng..."),
+                "get_revenue_report": ("Báo cáo doanh thu tài chính", "Đang trích xuất số liệu doanh thu..."),
+                "propose_sales_order_draft": ("Đề xuất tạo đơn nháp (HITL)", "Đang lập đơn hàng nháp và kiểm tra tồn kho..."),
+            }
+
+            while iteration < max_iterations and not agent_answered:
+                iteration += 1
+                response = None
+                for attempt in range(1, 3):
+                    try:
+                        llm = _get_llm(temperature=0.0).bind_tools(ALL_AGENT_TOOLS)
+                        response = await llm.ainvoke(messages)
+                        break
+                    except Exception as e_llm:
+                        if "429" in str(e_llm) or "ResourceExhausted" in str(e_llm):
+                            logger.warning("Rate limit in super_agent stream (attempt %d). Backing off 5s...", attempt)
+                            await asyncio.sleep(5)
+                            continue
+                        logger.error("LLM invoke error in super_agent stream: %s", e_llm)
+                        break
+
+                if not response:
+                    logger.warning("No response from LLM in super_agent stream.")
+                    break
+
+                messages.append(response)
+                tool_calls = getattr(response, "tool_calls", None) or []
+
+                if tool_calls:
+                    for idx, call in enumerate(tool_calls):
+                        t_name = call.get("name")
+                        t_args = call.get("args", {})
+                        call_id = call.get("id") or f"call_{iteration}_{idx}_{t_name}"
+                        step_id = f"tool_{iteration}_{idx}_{t_name}"
+                        tool = tools_by_name.get(t_name)
+
+                        meta_title, meta_running = tool_meta.get(t_name, (f"Thực thi {t_name}", f"Đang thực thi {t_name}..."))
+                        arg_summary = ", ".join(f"{k}={v}" for k, v in t_args.items() if v is not None)[:60]
+                        running_detail = f"{meta_running} ({arg_summary})" if arg_summary else meta_running
+
+                        # Stream event: tool is running
+                        t_step = add_thought(step_id, meta_title, running_detail, "running")
+                        yield f"data: {json.dumps({'type': 'thought', **t_step})}\n\n"
+                        yield f"data: {json.dumps({'type': 'status', 'message': f'AI Copilot: {meta_title}...' })}\n\n"
+
+                        if tool:
+                            try:
+                                res = await tool.ainvoke(t_args)
+                                res_str = str(res)
+                                messages.append(ToolMessage(content=res_str, tool_call_id=call_id, name=t_name))
+
+                                completed_detail = "Đã thực thi thành công"
+                                try:
+                                    parsed = json.loads(res_str)
+                                    if isinstance(parsed, dict):
+                                        tool_results.append(parsed)
+                                        # Trích xuất citations
+                                        if "citations" in parsed and isinstance(parsed["citations"], list):
+                                            for cit in parsed["citations"]:
+                                                if cit not in citations:
+                                                    citations.append(cit)
+                                            completed_detail = f"Đã tìm thấy {len(parsed['citations'])} trích dẫn đối chiếu từ cẩm nang"
+                                        # Trích xuất proposed_action
+                                        elif parsed.get("action") == "create_sales_order_draft" and parsed.get("success"):
+                                            proposed_action = parsed
+                                            order_num = parsed.get("order_number") or parsed.get("draft_payload", {}).get("order_number") or ""
+                                            cust_name = parsed.get("customer_name") or parsed.get("draft_payload", {}).get("customer_name") or ""
+                                            completed_detail = f"Đã tạo đơn nháp #{order_num} cho {cust_name} (chờ phê duyệt)"
+                                        elif t_name == "get_inventory":
+                                            avail = parsed.get("total_available") or parsed.get("available_quantity") or 0
+                                            items_list = parsed.get("items", [])
+                                            pname = parsed.get("product_name") or (items_list[0].get("product_name") if items_list else "")
+                                            completed_detail = f"Tồn kho khả dụng: {avail} cái{f' ({pname})' if pname else ''}" if parsed.get("found") else "Đã kiểm tra dữ liệu tồn kho"
+                                        elif t_name == "get_product":
+                                            pname = parsed.get("product", {}).get("name", "")
+                                            pprice = parsed.get("product", {}).get("formatted_price", "")
+                                            completed_detail = f"Sản phẩm: {pname} (Giá: {pprice})" if parsed.get("found") else "Không tìm thấy sản phẩm"
+                                        elif t_name == "list_products":
+                                            count = len(parsed.get("products", []))
+                                            completed_detail = f"Đã tìm thấy {count} mặt hàng liên quan"
+                                        elif t_name == "get_customer":
+                                            cname = parsed.get("customer", {}).get("name", "")
+                                            ccode = parsed.get("customer", {}).get("code", "")
+                                            completed_detail = f"Khách hàng: {cname} ({ccode})" if parsed.get("found") else "Không tìm thấy khách hàng"
+                                        elif t_name == "list_customers":
+                                            count = len(parsed.get("customers", []))
+                                            completed_detail = f"Đã tìm thấy {count} đối tác khách hàng"
+                                        elif t_name == "get_revenue_report":
+                                            tot = parsed.get("formatted_total_revenue", "")
+                                            completed_detail = f"Tổng doanh thu: {tot}" if tot else "Đã xuất báo cáo doanh thu"
+                                        elif t_name == "get_sales_orders":
+                                            count = len(parsed.get("orders", []))
+                                            completed_detail = f"Đã trích xuất {count} đơn hàng bán"
+                                        else:
+                                            completed_detail = parsed.get("message", "Đã thực thi thành công")
+                                    else:
+                                        tool_results.append({"name": t_name, "result": parsed})
+                                except Exception:
+                                    tool_results.append({"name": t_name, "result": res_str})
+
+                                # Stream event: tool is completed
+                                t_step = add_thought(step_id, meta_title, completed_detail, "completed")
+                                yield f"data: {json.dumps({'type': 'thought', **t_step})}\n\n"
+
+                            except Exception as e_tool:
+                                logger.error("Tool execution failed for %s: %s", t_name, e_tool)
+                                err_str = f"Lỗi thực thi {t_name}: {str(e_tool)}"
+                                messages.append(ToolMessage(content=err_str, tool_call_id=call_id, name=t_name))
+                                t_step = add_thought(step_id, meta_title, f"Thất bại: {str(e_tool)}", "completed")
+                                yield f"data: {json.dumps({'type': 'thought', **t_step})}\n\n"
+                else:
+                    # Model provided text answer without tool calls
+                    content_text = _extract_text(response.content)
+                    if content_text and len(content_text.strip()) > 10:
+                        agent_answered = True
+                        full_answer = content_text
+                        break
+
+            # Cập nhật thought plan hoàn thành
+            t_react = add_thought("super_agent", "Lập kế hoạch & Điều phối", "Đã hoàn thành phân tích và thực thi chuỗi công cụ", "completed")
+            yield f"data: {json.dumps({'type': 'thought', **t_react})}\n\n"
+
+            t_syn = add_thought("synthesis", "Tổng hợp câu trả lời", "Đang truyền tải câu trả lời toàn diện...", "running")
             yield f"data: {json.dumps({'type': 'thought', **t_syn})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'message': 'AI Copilot đang trả lời...'})}\n\n"
 
-            retrieved_ctx = state.get("retrieved_context", [])
-            grounded_ans = None
-            if retrieved_ctx and isinstance(retrieved_ctx[0], dict) and "answer" in retrieved_ctx[0]:
-                grounded_ans = retrieved_ctx[0]["answer"]
-
-            if grounded_ans:
-                full_answer = grounded_ans
-                words = grounded_ans.split(" ")
+            # Nếu agent đã có câu trả lời hoàn chỉnh
+            if full_answer:
+                words = full_answer.split(" ")
                 for i in range(0, len(words), 3):
                     chunk_text = " ".join(words[i:i+3]) + " "
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk_text})}\n\n"
-                    await asyncio.sleep(0.015)
+                    await asyncio.sleep(0.012)
             else:
-                context_str = json.dumps(state.get("tool_results", []), ensure_ascii=False)
+                # Nếu agent chưa có câu trả lời hoặc cần synthesize
+                context_summary = []
+                for msg in messages:
+                    if isinstance(msg, ToolMessage):
+                        context_summary.append(f"Tool ({msg.name}): {msg.content}")
+                context_text = "\n\n".join(context_summary)
+
                 prompt = [
                     SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
-                    HumanMessage(content=f"Câu hỏi: {clean_message}\n\nTài liệu RAG:\n{context_str}\n\nHãy trả lời bằng Tiếng Việt kèm nguồn trích dẫn:"),
+                    HumanMessage(content=(
+                        f"Câu hỏi người dùng: {clean_message}\n\n"
+                        f"Dữ liệu công cụ thu thập được:\n{context_text}\n\n"
+                        f"Hãy tổng hợp thành phản hồi hoàn chỉnh, súc tích và chính xác bằng Tiếng Việt:"
+                    )),
                 ]
+                streamed = False
                 try:
-                    llm = _get_llm(model=settings.GEMINI_MODEL)
-                    async for chunk in llm.astream(prompt):
-                        token = _extract_text(chunk.content)
-                        if token:
-                            full_answer += token
-                            yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
-                except Exception as e_primary:
-                    logger.warning("Primary RAG stream failed: %s. Trying fallback (%s)...", e_primary, settings.GEMINI_FALLBACK_MODEL)
-                    try:
-                        llm_fb = _get_llm(model=settings.GEMINI_FALLBACK_MODEL)
-                        async for chunk in llm_fb.astream(prompt):
-                            token = _extract_text(chunk.content)
-                            if token:
-                                full_answer += token
-                                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
-                    except Exception as e_fallback:
-                        logger.warning("Fallback RAG stream failed: %s", e_fallback)
-                        full_answer = "Đã tìm thấy thông tin từ tài liệu RAG."
-                        yield f"data: {json.dumps({'type': 'token', 'content': full_answer})}\n\n"
-
-        elif intent == "create_order_draft":
-            t_draft = add_thought("draft", "Kiểm tra khách hàng & tồn kho", "Đang đối chiếu mã khách hàng, giá sản phẩm và tồn kho...", "running")
-            yield f"data: {json.dumps({'type': 'thought', **t_draft})}\n\n"
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Đang kiểm tra tồn kho và lập đơn hàng nháp...'})}\n\n"
-            draft_res = await draft_order_agent_node(state)
-            state.update(draft_res)
-            proposed_action = state.get("proposed_action")
-
-            t_draft = add_thought("draft", "Kiểm tra khách hàng & tồn kho", "Đã khởi tạo đề xuất đơn hàng nháp (Human-in-the-Loop)", "completed")
-            yield f"data: {json.dumps({'type': 'thought', **t_draft})}\n\n"
-
-            t_syn = add_thought("synthesis", "Tổng hợp câu trả lời", "Soạn tóm tắt đơn hàng và lưu ý phê duyệt...", "running")
-            yield f"data: {json.dumps({'type': 'thought', **t_syn})}\n\n"
-
-            if proposed_action and proposed_action.get("draft_payload"):
-                payload = proposed_action["draft_payload"]
-                customer_name = payload.get("customer_name", "")
-                customer_code = payload.get("customer_code", "")
-                total_formatted = payload.get("formatted_total_amount") or payload.get("formatted_total", "")
-                items = payload.get("items", [])
-                items_table = "\n".join([
-                    f"- **{it.get('product_name')}** (`{it.get('sku')}`): "
-                    f"{it.get('quantity')} cái x {it.get('formatted_unit_price') or it.get('formatted_price', '')} = **{it.get('formatted_line_total') or it.get('formatted_subtotal', '')}**"
-                    for it in items
-                ])
-                order_number = payload.get("order_number") or ""
-                order_badge = f" - Mã đơn: `{order_number}`" if order_number else ""
-                full_answer = (
-                    f"### 📋 Đã khởi tạo đơn hàng nháp thành công{order_badge}\n\n"
-                    f"Hệ thống đã lưu đơn hàng nháp cho khách hàng **{customer_name}** (`{customer_code}`):\n\n"
-                    f"**Chi tiết sản phẩm:**\n{items_table}\n\n"
-                    f"💵 **Tổng tiền:** {total_formatted}\n\n"
-                    f"> ℹ️ **Lưu ý:** Đơn hàng đã được tạo thành công trong hệ thống tại tab **Đơn hàng** (trạng thái `Bản nháp / draft`) "
-                    f"và xuất hiện trong **Hộp thư phê duyệt** (Human-in-the-Loop) chờ người có thẩm quyền xác nhận!"
-                )
-            else:
-                tool_results = state.get("tool_results", [])
-                if tool_results and not tool_results[-1].get("success", True):
-                    full_answer = tool_results[-1].get("message", "Không thể tạo đơn hàng nháp do thiếu thông tin.")
-                else:
-                    full_answer = "Đã xử lý yêu cầu lập đơn hàng nháp."
-
-            words = full_answer.split(" ")
-            for i in range(0, len(words), 4):
-                chunk_text = " ".join(words[i:i+4]) + " "
-                yield f"data: {json.dumps({'type': 'token', 'content': chunk_text})}\n\n"
-                await asyncio.sleep(0.015)
-
-        else: # erp_query, erp_data_query, clarify, unknown
-            is_erp = intent in ("erp_query", "erp_data_query")
-            status_msg = "Đang kết nối cơ sở dữ liệu ERP..." if is_erp else "AI Copilot đang phân tích câu hỏi..."
-            yield f"data: {json.dumps({'type': 'status', 'message': status_msg})}\n\n"
-
-            if is_erp:
-                t_erp = add_thought("db", "Truy vấn cơ sở dữ liệu ERP (PostgreSQL)", "Đang gọi công cụ truy vấn dữ liệu đơn hàng, doanh thu hoặc tồn kho...", "running")
-                yield f"data: {json.dumps({'type': 'thought', **t_erp})}\n\n"
-
-                erp_res = await erp_agent_node(state)
-                state.setdefault("messages", []).extend(erp_res.get("messages", []))
-                if should_call_erp_tools(state) == "erp_tools":
-                    tool_res = await erp_tools_node(state)
-                    state.setdefault("messages", []).extend(tool_res.get("messages", []))
-                    if "tool_results" in tool_res:
-                        state["tool_results"] = tool_res["tool_results"]
-
-                num_tools = len(state.get("tool_results", []))
-                db_detail = f"Đã thực thi thành công {num_tools} truy vấn nghiệp vụ trên cơ sở dữ liệu ERP" if num_tools > 0 else "Đã trích xuất số liệu thành công từ cơ sở dữ liệu"
-                t_erp = add_thought("db", "Truy vấn cơ sở dữ liệu ERP (PostgreSQL)", db_detail, "completed")
-                yield f"data: {json.dumps({'type': 'thought', **t_erp})}\n\n"
-            else:
-                t_other = add_thought("analyze", "Phân tích nội dung", "AI Copilot đang phân tích nội dung yêu cầu...", "completed")
-                yield f"data: {json.dumps({'type': 'thought', **t_other})}\n\n"
-
-            t_syn = add_thought("synthesis", "Tổng hợp câu trả lời", "Đang định dạng bảng số liệu và soạn câu trả lời...", "running")
-            yield f"data: {json.dumps({'type': 'thought', **t_syn})}\n\n"
-
-            context_summary = []
-            for msg in state.get("messages", []):
-                if isinstance(msg, ToolMessage):
-                    context_summary.append(f"Tool Result ({msg.name}): {msg.content}")
-            if state.get("tool_results"):
-                context_summary.append(f"Structured Tool Results: {json.dumps(state['tool_results'], ensure_ascii=False)}")
-            context_text = "\n\n".join(context_summary)
-
-            prompt = [
-                SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
-                HumanMessage(content=(
-                    f"Câu hỏi người dùng: {clean_message}\n\n"
-                    f"Ý định: {intent}\n\n"
-                    f"Dữ liệu công cụ thu thập được:\n{context_text}\n\n"
-                    f"Hãy tổng hợp thành phản hồi hoàn chỉnh, súc tích và chính xác bằng Tiếng Việt (dùng bảng Markdown chuẩn nếu có nhiều số liệu):"
-                )),
-            ]
-
-            streamed = False
-            try:
-                llm = _get_llm(model=settings.GEMINI_MODEL, temperature=0.0)
-                async for chunk in llm.astream(prompt):
-                    token = _extract_text(chunk.content)
-                    if token:
-                        full_answer += token
-                        yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
-                streamed = True
-            except Exception as e_primary:
-                logger.warning("Primary stream failed in synthesizer: %s. Trying fallback (%s)...", e_primary, settings.GEMINI_FALLBACK_MODEL)
-                try:
-                    llm_fb = _get_llm(model=settings.GEMINI_FALLBACK_MODEL, temperature=0.0)
-                    async for chunk in llm_fb.astream(prompt):
+                    llm_syn = _get_llm(model=settings.GEMINI_MODEL, temperature=0.0)
+                    async for chunk in llm_syn.astream(prompt):
                         token = _extract_text(chunk.content)
                         if token:
                             full_answer += token
                             yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
                     streamed = True
-                except Exception as e_fallback:
-                    logger.warning("Fallback stream failed in synthesizer: %s", e_fallback)
+                except Exception as e_syn:
+                    logger.warning("Synthesizer stream failed: %s", e_syn)
+                    try:
+                        llm_fb = _get_llm(model=settings.GEMINI_FALLBACK_MODEL, temperature=0.0)
+                        async for chunk in llm_fb.astream(prompt):
+                            token = _extract_text(chunk.content)
+                            if token:
+                                full_answer += token
+                                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+                        streamed = True
+                    except Exception as e_fb:
+                        logger.warning("Fallback synthesizer failed: %s", e_fb)
 
-            if not streamed or not full_answer:
-                last_tool_content = None
-                for msg in reversed(state.get("messages", [])):
-                    if isinstance(msg, ToolMessage):
-                        last_tool_content = msg.content
-                        break
-                fallback_msg = f"Kết quả từ hệ thống ERP:\n\n{last_tool_content}" if last_tool_content else "Đã xử lý yêu cầu thành công."
-                full_answer = fallback_msg
-                yield f"data: {json.dumps({'type': 'token', 'content': fallback_msg})}\n\n"
+                if not streamed or not full_answer:
+                    if proposed_action and proposed_action.get("draft_payload"):
+                        payload = proposed_action["draft_payload"]
+                        full_answer = f"Đã lập đơn hàng nháp #{payload.get('order_number')} cho khách hàng {payload.get('customer_name')} thành công."
+                    else:
+                        full_answer = "Đã xử lý xong các yêu cầu của bạn."
+                    yield f"data: {json.dumps({'type': 'token', 'content': full_answer})}\n\n"
+
+            t_syn = add_thought("synthesis", "Tổng hợp câu trả lời", "Đã hoàn thành phản hồi toàn diện", "completed")
+            yield f"data: {json.dumps({'type': 'thought', **t_syn})}\n\n"
 
         # Format citations
         formatted_citations = [

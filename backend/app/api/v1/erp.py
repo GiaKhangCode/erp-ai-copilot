@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, Query, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.auth.dependencies import get_optional_current_user
+from app.auth.dependencies import (
+    get_current_user,
+    require_permission,
+    get_current_user_permissions,
+)
+from app.core.errors import AppException
 from app.erp.models import User
 from app.erp.schemas import (
     CustomerResponse,
@@ -33,6 +38,7 @@ async def list_customers(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     status: Optional[str] = Query(None, description="Lọc theo trạng thái 'active' hoặc 'inactive'"),
+    current_user: User = Depends(require_permission("customers:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Lấy danh sách khách hàng có phân trang và lọc theo trạng thái."""
@@ -42,6 +48,7 @@ async def list_customers(
 @router.get("/customers/{code}", response_model=CustomerResponse)
 async def get_customer(
     code: str,
+    current_user: User = Depends(require_permission("customers:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Tra cứu thông tin chi tiết một khách hàng theo mã code (ví dụ: CUS-0001)."""
@@ -56,6 +63,7 @@ async def list_products(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     is_active: Optional[bool] = Query(None, description="Lọc theo trạng thái kinh doanh"),
+    current_user: User = Depends(require_permission("products:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Lấy danh sách sản phẩm và bảng giá niêm yết."""
@@ -65,6 +73,7 @@ async def list_products(
 @router.get("/products/{sku}", response_model=ProductResponse)
 async def get_product(
     sku: str,
+    current_user: User = Depends(require_permission("products:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Tra cứu chi tiết sản phẩm theo mã SKU (ví dụ: SKU-001)."""
@@ -78,6 +87,7 @@ async def get_product(
 async def get_inventory(
     sku: Optional[str] = Query(None, description="Mã SKU sản phẩm cần kiểm tra"),
     warehouse_code: Optional[str] = Query(None, description="Mã kho cần lọc (ví dụ: WH-HN)"),
+    current_user: User = Depends(require_permission("inventory:read")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -96,21 +106,48 @@ async def list_sales_orders(
     status: Optional[str] = Query(None, description="Lọc theo trạng thái ('draft', 'confirmed', ...)"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    current_user: User = Depends(require_permission("orders:read")),
+    user_permissions: set[str] = Depends(get_current_user_permissions),
     db: AsyncSession = Depends(get_db),
 ):
-    """Lấy danh sách đơn hàng bán."""
+    """
+    Lấy danh sách đơn hàng bán.
+    Tự động áp dụng Data Scoping:
+    - Nếu không có quyền 'orders:read_all', nhân viên (sales_rep) chỉ xem được đơn hàng do chính mình tạo.
+    """
+    has_read_all = "*" in user_permissions or "orders:read_all" in user_permissions
+    created_by_filter = None if has_read_all else current_user.id
+
     return await SalesOrderService.list_orders(
-        db, customer_code=customer_code, status=status, limit=limit, offset=offset
+        db,
+        customer_code=customer_code,
+        status=status,
+        limit=limit,
+        offset=offset,
+        created_by=created_by_filter,
     )
 
 
 @router.get("/sales-orders/{order_id}", response_model=OrderResponse)
 async def get_sales_order(
     order_id: uuid.UUID,
+    current_user: User = Depends(require_permission("orders:read")),
+    user_permissions: set[str] = Depends(get_current_user_permissions),
     db: AsyncSession = Depends(get_db),
 ):
-    """Tra cứu chi tiết đơn hàng bao gồm danh sách các dòng sản phẩm."""
-    return await SalesOrderService.get_order_by_id(db, order_id=order_id)
+    """
+    Tra cứu chi tiết đơn hàng bao gồm danh sách các dòng sản phẩm.
+    Áp dụng Object-Level Authorization: Chặn nhân viên xem đơn hàng của đồng nghiệp nếu không có quyền 'orders:read_all'.
+    """
+    order = await SalesOrderService.get_order_by_id(db, order_id=order_id)
+    has_read_all = "*" in user_permissions or "orders:read_all" in user_permissions
+    if not has_read_all and order.created_by != current_user.id:
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="FORBIDDEN",
+            message="Bạn không có quyền truy cập thông tin đơn hàng này.",
+        )
+    return order
 
 
 @router.post(
@@ -121,23 +158,17 @@ async def get_sales_order(
 async def create_sales_order_draft(
     payload: OrderDraftCreate,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(require_permission("orders:create")),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Tạo đơn hàng nháp (draft).
-    Hệ thống sẽ tự động:
-    1. Kiểm tra sự tồn tại và tính hợp lệ của khách hàng và SKU.
-    2. Snapshot giá bán trực tiếp từ danh mục sản phẩm (không tin giá từ client/LLM).
-    3. Tự động tính toán tổng tiền đơn hàng trên máy chủ trong transaction.
-    4. Hỗ trợ Idempotency-Key chống duplicate writes khi retry.
-    5. Gán trạng thái 'draft' chờ duyệt.
+    Tạo đơn hàng nháp (draft). Yêu cầu quyền 'orders:create'.
+    Hệ thống sẽ tự động gán actor_id là ID của người dùng đăng nhập hiện tại.
     """
-    actor_id = current_user.id if current_user else None
     return await SalesOrderService.create_order_draft(
         db,
         payload=payload,
-        actor_id=actor_id,
+        actor_id=current_user.id,
         idempotency_key=idempotency_key,
     )
 
@@ -150,10 +181,12 @@ async def get_revenue_report(
     year: Optional[int] = Query(None, description="Năm báo cáo (ví dụ: 2026)"),
     month: Optional[int] = Query(None, ge=1, le=12, description="Tháng báo cáo (1-12)"),
     status: Optional[str] = Query(None, description="Lọc theo trạng thái đơn hàng"),
+    current_user: User = Depends(require_permission("reports:revenue_view")),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Báo cáo doanh thu theo kỳ và tháng (Use Case UC-02 & Tool get_revenue).
-    Tính toán doanh thu tổng và phân rã chi tiết từ cơ sở dữ liệu.
+    Báo cáo doanh thu theo kỳ và tháng (Use Case UC-02).
+    Chỉ dành cho người dùng có quyền 'reports:revenue_view' (admin, director, sales_manager).
     """
     return await ReportingService.get_revenue(db, year=year, month=month, status=status)
+

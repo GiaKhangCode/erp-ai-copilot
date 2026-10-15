@@ -15,27 +15,36 @@ import {
   ShoppingBag, 
   Calculator, 
   UserCheck, 
-  Settings
+  Settings,
+  ShieldCheck,
+  Shield
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 
 interface NavItem {
   label: string;
   href: string;
   icon: any;
   badge?: number;
+  permission?: string;
 }
 
 const mainNavItems: NavItem[] = [
   { label: "Trang chủ", href: "/", icon: Home },
   { label: "AI Copilot", href: "/copilot", icon: Sparkles },
-  { label: "Khách hàng", href: "/customers", icon: Users },
-  { label: "Sản phẩm", href: "/products", icon: Package },
-  { label: "Đơn hàng", href: "/orders", icon: ShoppingCart },
-  { label: "Tồn kho", href: "/inventory", icon: Warehouse },
-  { label: "Báo cáo", href: "/reports", icon: BarChart2 },
-  { label: "Tài liệu", href: "/documents", icon: FileText },
-  { label: "Quy trình phê duyệt", href: "/approvals", icon: CheckSquare },
+  { label: "Khách hàng", href: "/customers", icon: Users, permission: "customers:read" },
+  { label: "Sản phẩm", href: "/products", icon: Package, permission: "products:read" },
+  { label: "Đơn hàng", href: "/orders", icon: ShoppingCart, permission: "orders:read" },
+  { label: "Tồn kho", href: "/inventory", icon: Warehouse, permission: "inventory:read" },
+  { label: "Báo cáo", href: "/reports", icon: BarChart2, permission: "reports:revenue_view" },
+  { label: "Tài liệu", href: "/documents", icon: FileText, permission: "documents:read" },
+  { label: "Quy trình phê duyệt", href: "/approvals", icon: CheckSquare, permission: "orders:read" },
+];
+
+const adminNavItems: NavItem[] = [
+  { label: "Quản lý nhân viên", href: "/admin/users", icon: Users, permission: "users:read" },
+  { label: "Ma trận phân quyền", href: "/admin/roles", icon: ShieldCheck, permission: "roles:manage" },
 ];
 
 const secondaryNavItems: NavItem[] = [
@@ -47,6 +56,18 @@ const secondaryNavItems: NavItem[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { hasPermission, isAdmin } = useAuth();
+
+  const filteredMainItems = mainNavItems.filter((item) => {
+    if (!item.permission) return true;
+    return isAdmin || hasPermission(item.permission);
+  });
+
+  const showAdminSection = isAdmin || hasPermission("users:read") || hasPermission("roles:manage");
+  const filteredAdminItems = adminNavItems.filter((item) => {
+    if (!item.permission) return true;
+    return isAdmin || hasPermission(item.permission);
+  });
 
   return (
     <aside className="w-60 bg-white border-r border-slate-200/90 flex flex-col justify-between shrink-0 h-full max-h-screen select-none overflow-hidden z-30">
@@ -65,7 +86,7 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-4">
         {/* Main Navigation */}
         <nav className="space-y-0.5">
-          {mainNavItems.map((item) => {
+          {filteredMainItems.map((item) => {
             const isActive = pathname === item.href || (item.href !== "/" && pathname?.startsWith(item.href));
             const Icon = item.icon;
 
@@ -125,6 +146,36 @@ export function Sidebar() {
             );
           })}
         </nav>
+
+        {/* Admin Navigation (chỉ hiển thị cho người có quyền quản trị) */}
+        {showAdminSection && (
+          <div className="pt-2 border-t border-slate-100 space-y-0.5">
+            <div className="px-3 py-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Shield className="w-3 h-3 text-blue-600" />
+              <span>Quản trị hệ thống</span>
+            </div>
+            {filteredAdminItems.map((item) => {
+              const isActive = pathname === item.href || pathname?.startsWith(item.href);
+              const Icon = item.icon;
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-150",
+                    isActive
+                      ? "bg-blue-50/90 text-blue-600 font-semibold"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  )}
+                >
+                  <Icon className={cn("w-4 h-4 shrink-0", isActive ? "text-blue-600" : "text-slate-500")} />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
 
         {/* Secondary Navigation */}
         <div className="pt-2 border-t border-slate-100 space-y-0.5">

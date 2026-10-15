@@ -26,11 +26,15 @@ class ProductService:
         limit: int = 50,
         offset: int = 0,
         is_active: Optional[bool] = None,
+        search: Optional[str] = None,
     ) -> List[Product]:
-        """Lấy danh sách sản phẩm và bảng giá niêm yết."""
+        """Lấy danh sách sản phẩm và bảng giá niêm yết, hỗ trợ tìm kiếm theo tên hoặc mã SKU."""
         stmt = select(Product)
         if is_active is not None:
             stmt = stmt.where(Product.is_active == is_active)
+        if search:
+            pattern = f"%{search.strip()}%"
+            stmt = stmt.where((Product.name.ilike(pattern)) | (Product.sku.ilike(pattern)))
         stmt = stmt.order_by(Product.sku).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())

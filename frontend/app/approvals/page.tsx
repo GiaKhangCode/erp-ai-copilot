@@ -25,11 +25,14 @@ import {
 } from "@/lib/api";
 import { formatVND } from "@/lib/utils";
 import { useToast } from "@/components/toast-provider";
+import { useAuth } from "@/lib/auth-context";
 
 function ApprovalsInboxContent() {
   const searchParams = useSearchParams();
   const urlStatus = searchParams.get("status") || "pending";
   const toast = useToast();
+  const { hasPermission, isAdmin } = useAuth();
+  const canApprove = isAdmin || hasPermission("orders:approve");
 
   const [activeTab, setActiveTab] = useState<string>(urlStatus === "all" ? "all" : urlStatus);
   const [items, setItems] = useState<ApprovalItem[]>([]);
@@ -534,30 +537,37 @@ function ApprovalsInboxContent() {
           {/* 3. Footer Actions: Phê duyệt / Từ chối CỐ ĐỊNH Ở ĐÁY */}
           <div className="p-4 border-t border-slate-200/80 bg-white shrink-0 shadow-lg">
             {selectedItem.status === "pending" ? (
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleReject}
-                  disabled={actionLoading}
-                  className="flex-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 hover:border-rose-300 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <X className="w-4 h-4" />
-                  <span>Từ chối</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleApprove}
-                  disabled={actionLoading}
-                  className="flex-1 bg-[#0066FF] hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-600/20 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer disabled:opacity-50"
-                >
-                  {actionLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4" />
-                  )}
-                  <span>Phê duyệt ngay</span>
-                </button>
-              </div>
+              canApprove ? (
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleReject}
+                    disabled={actionLoading}
+                    className="flex-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 hover:border-rose-300 px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>Từ chối</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApprove}
+                    disabled={actionLoading}
+                    className="flex-1 bg-[#0066FF] hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-600/20 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    {actionLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    <span>Phê duyệt ngay</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center py-2.5 px-3 text-xs text-amber-800 font-medium bg-amber-50 rounded-xl border border-amber-200/80 flex items-center justify-center gap-2">
+                  <Info className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Chế độ chỉ xem: Bạn không có quyền phê duyệt đơn hàng. Vui lòng liên hệ Quản lý bán hàng.</span>
+                </div>
+              )
             ) : (
               <div className="text-center py-2 text-xs text-slate-500 font-medium bg-slate-50 rounded-xl border border-slate-100">
                 {selectedItem.status === "approved" ? "✅ Yêu cầu này đã được phê duyệt thành công." : "❌ Yêu cầu này đã bị từ chối."}

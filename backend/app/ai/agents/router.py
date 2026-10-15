@@ -289,14 +289,10 @@ async def classify_intent_node(state: ERPAgentState) -> Dict[str, Any]:
 def route_by_intent(state: ERPAgentState) -> str:
     """
     LangGraph Conditional Edge Function: Định tuyến trạng thái sang node tiếp theo.
+    - 'chitchat' -> 'chitchat_agent' (Fast-path phản hồi tức thì, tiết kiệm token)
+    - Tất cả các nghiệp vụ khác (truy vấn ERP, hỏi đáp RAG, lập đơn nháp, hoặc prompt hỗn hợp) -> 'super_agent' (ReAct Multi-step Loop)
     """
     intent = state.get("intent", "unknown")
-    if intent == "erp_query":
-        return "erp_agent"
-    elif intent == "document_qa":
-        return "rag_agent"
-    elif intent == "create_order_draft":
-        return "draft_order_agent"
-    elif intent == "chitchat":
+    if intent == "chitchat":
         return "chitchat_agent"
-    return "clarify_agent"
+    return "super_agent"

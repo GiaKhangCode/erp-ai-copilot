@@ -38,9 +38,10 @@ export default function LoginPage() {
 
   const demoAccounts = [
     { role: "admin", label: "Admin", name: "Quản trị viên", email: "admin@erpcopilot.vn", pass: "admin123" },
-    { role: "sales_manager", label: "Quản lý", name: "Quản lý bán hàng", email: "manager@erpcopilot.vn", pass: "manager123" },
-    { role: "sales_rep", label: "Kinh doanh", name: "Kinh doanh", email: "sales@erpcopilot.vn", pass: "sales123" },
-    { role: "accountant", label: "Kế toán", name: "Kế toán", email: "accountant@erpcopilot.vn", pass: "accountant123" },
+    { role: "director", label: "Giám đốc", name: "Ban Giám đốc", email: "director@erpcopilot.vn", pass: "director123" },
+    { role: "sales_manager", label: "Quản lý", name: "Quản lý kinh doanh", email: "manager@erpcopilot.vn", pass: "manager123" },
+    { role: "sales_rep", label: "Kinh doanh", name: "Nhân viên kinh doanh", email: "sales@erpcopilot.vn", pass: "sales123" },
+    { role: "warehouse_keeper", label: "Thủ kho", name: "Quản lý kho hàng", email: "warehouse@erpcopilot.vn", pass: "warehouse123" },
   ];
 
   const handleSelectDemo = (dEmail: string, dPass: string) => {
@@ -61,7 +62,9 @@ export default function LoginPage() {
 
     try {
       await login(email.trim(), password.trim());
-      window.location.href = "/";
+      const searchParams = new URLSearchParams(window.location.search);
+      const returnUrl = searchParams.get("returnUrl") || "/";
+      window.location.href = returnUrl;
     } catch (err: any) {
       setErrorMessage(err.message || "Email hoặc mật khẩu không chính xác.");
     } finally {

@@ -13,7 +13,8 @@ from app.core.config import settings
 from app.ai.agents.state import ERPAgentState, ExtractedEntities, OrderItemDraft
 from app.ai.agents.router import classify_intent_node, route_by_intent
 from app.ai.tools.context import UserContext, get_current_user_context, set_current_user_context
-from app.ai.tools.erp_tools import (
+from app.ai.tools import (
+    ALL_AGENT_TOOLS,
     get_inventory,
     get_product,
     list_products,
@@ -22,9 +23,10 @@ from app.ai.tools.erp_tools import (
     get_sales_orders,
     get_revenue_report,
     propose_sales_order_draft,
+    search_company_knowledge,
 )
-from app.ai.tools.rag_tool import search_company_knowledge
 from app.ai.prompts.agent_prompts import (
+    SUPER_AGENT_SYSTEM_PROMPT,
     ERP_AGENT_SYSTEM_PROMPT,
     CHITCHAT_SYSTEM_PROMPT,
     CLARIFY_SYSTEM_PROMPT,
@@ -74,7 +76,172 @@ def _extract_text(content: Any) -> str:
 
 
 # =========================================================================
-# LangGraph Node Handlers
+# ReAct Super-Agent Node Handlers (Multi-step Tool Calling Loop)
+# =========================================================================
+
+async def super_agent_node(state: ERPAgentState) -> Dict[str, Any]:
+    """
+    Super-Agent Core Node: Nạp toàn bộ kho ALL_AGENT_TOOLS, hỗ trợ lập kế hoạch và suy nghĩ nhiều bước (ReAct loop).
+    """
+    set_current_user_context(UserContext(
+        user_id=state.get("user_id"),
+        user_role=state.get("user_role"),
+    ))
+
+    system_msg = SystemMessage(content=SUPER_AGENT_SYSTEM_PROMPT)
+    messages: List[BaseMessage] = [system_msg]
+
+    history = state.get("messages", [])
+    if history:
+        messages.extend(history)
+    else:
+        query = state.get("user_query", "")
+        messages.append(HumanMessage(content=query))
+
+    last_err = None
+    for attempt in range(1, 3):
+        try:
+            llm = _get_llm(temperature=0.0).bind_tools(ALL_AGENT_TOOLS)
+            response = await llm.ainvoke(messages)
+            return {
+                "messages": [response],
+            }
+        except Exception as e:
+            last_err = e
+            if "429" in str(e) or "ResourceExhausted" in str(e):
+                logger.warning("Gemini 429 rate limit hit in super_agent_node (attempt %d). Backing off 5s...", attempt)
+                await asyncio.sleep(5)
+                continue
+            break
+
+    logger.error("Error in super_agent_node: %s", last_err)
+    err_msg = AIMessage(content=f"Đã xảy ra lỗi khi kết nối công cụ Super-Agent: {str(last_err)}")
+    return {
+        "messages": [err_msg],
+        "error": str(last_err),
+    }
+
+
+def should_continue(state: ERPAgentState) -> Literal["tools", "synthesizer"]:
+    """
+    Conditional Edge: Kiểm tra xem Super-Agent có yêu cầu gọi Tool tiếp không.
+    Áp dụng guardrail recursion_limit <= 6.
+    """
+    current_iter = state.get("iteration", 0)
+    if current_iter >= 6:
+        logger.warning("Super-Agent reached max iteration limit (6). Transitioning to synthesizer.")
+        return "synthesizer"
+
+    messages = state.get("messages", [])
+    if messages:
+        last_msg = messages[-1]
+        if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+            return "tools"
+
+    return "synthesizer"
+
+
+async def super_tools_node(state: ERPAgentState) -> Dict[str, Any]:
+    """
+    Node thực thi các tool calls từ Super-Agent:
+    - Chạy tool với context bảo mật
+    - Trích xuất citations từ RAG nếu có
+    - Trích xuất proposed_action từ propose_sales_order_draft nếu có
+    - Đếm số lần lặp (iteration) để bảo vệ chống loop
+    """
+    set_current_user_context(UserContext(
+        user_id=state.get("user_id"),
+        user_role=state.get("user_role"),
+    ))
+
+    tools_by_name = {tool.name: tool for tool in ALL_AGENT_TOOLS}
+    messages = state.get("messages", [])
+    tool_messages: List[BaseMessage] = []
+    tool_results = list(state.get("tool_results", []))
+    citations = list(state.get("citations", []))
+    proposed_action = state.get("proposed_action")
+    thought_steps = list(state.get("thought_steps", []) or [])
+
+    tool_label_map = {
+        "search_company_knowledge": ("Tra cứu tài liệu nội bộ (RAG)", "Truy vấn chính sách và cẩm nang công ty"),
+        "get_inventory": ("Kiểm tra tồn kho", "Kiểm tra số lượng khả dụng"),
+        "get_product": ("Tra cứu thông tin sản phẩm", "Kiểm tra thông số và giá niêm yết"),
+        "list_products": ("Tìm kiếm danh mục sản phẩm", "Lấy danh sách mặt hàng"),
+        "get_customer": ("Tra cứu thông tin khách hàng", "Xác minh thông tin đối tác"),
+        "list_customers": ("Tìm kiếm khách hàng", "Lấy danh sách đối tác"),
+        "get_sales_orders": ("Tra cứu đơn hàng", "Kiểm tra lịch sử giao dịch"),
+        "get_revenue_report": ("Báo cáo doanh thu", "Trích xuất số liệu tài chính"),
+        "propose_sales_order_draft": ("Đề xuất tạo đơn nháp (HITL)", "Khởi tạo bản nháp đơn hàng chờ phê duyệt"),
+    }
+
+    if messages:
+        last_msg = messages[-1]
+        tool_calls = getattr(last_msg, "tool_calls", []) or []
+        for idx, call in enumerate(tool_calls):
+            name = call.get("name")
+            args = call.get("args", {})
+            call_id = call.get("id") or f"call_{idx}_{name}"
+            tool = tools_by_name.get(name)
+
+            title, desc = tool_label_map.get(name, (f"Thực thi {name}", f"Chạy công cụ {name}"))
+            arg_summary = ", ".join(f"{k}={v}" for k, v in args.items() if v is not None)[:60]
+            detail = f"{desc} ({arg_summary})" if arg_summary else desc
+
+            if tool:
+                try:
+                    res = await tool.ainvoke(args)
+                    res_str = str(res)
+                    tool_messages.append(ToolMessage(content=res_str, tool_call_id=call_id, name=name))
+
+                    try:
+                        parsed = json.loads(res_str)
+                        if isinstance(parsed, dict):
+                            tool_results.append(parsed)
+                            # Nếu là tool RAG search_company_knowledge
+                            if "citations" in parsed and isinstance(parsed["citations"], list):
+                                for cit in parsed["citations"]:
+                                    if cit not in citations:
+                                        citations.append(cit)
+                            # Nếu là tool propose_sales_order_draft
+                            if parsed.get("action") == "create_sales_order_draft" and parsed.get("success"):
+                                proposed_action = parsed
+                        else:
+                            tool_results.append({"name": name, "result": parsed})
+                    except Exception:
+                        tool_results.append({"name": name, "result": res_str})
+
+                    thought_steps.append({
+                        "step": f"tool_{name}",
+                        "title": title,
+                        "detail": detail,
+                        "status": "completed",
+                    })
+                except Exception as e:
+                    logger.error("Error executing tool %s: %s", name, e)
+                    err_str = f"Lỗi thực thi công cụ {name}: {str(e)}"
+                    tool_messages.append(ToolMessage(content=err_str, tool_call_id=call_id, name=name))
+                    tool_results.append({"name": name, "error": str(e), "success": False})
+                    thought_steps.append({
+                        "step": f"tool_{name}",
+                        "title": title,
+                        "detail": f"{detail} - Thất bại: {str(e)}",
+                        "status": "error",
+                    })
+
+    current_iter = state.get("iteration", 0) + 1
+
+    return {
+        "messages": tool_messages,
+        "tool_results": tool_results,
+        "citations": citations,
+        "proposed_action": proposed_action,
+        "thought_steps": thought_steps,
+        "iteration": current_iter,
+    }
+
+
+# =========================================================================
+# Legacy Node Handlers (Giữ để tương thích ngược)
 # =========================================================================
 
 async def erp_agent_node(state: ERPAgentState) -> Dict[str, Any]:
@@ -458,63 +625,59 @@ async def clarify_agent_node(state: ERPAgentState) -> Dict[str, Any]:
 
 async def synthesizer_node(state: ERPAgentState) -> Dict[str, Any]:
     """
-    Node tổng hợp câu trả lời cuối cùng từ ngữ cảnh và kết quả công cụ.
+    Node tổng hợp câu trả lời cuối cùng từ ngữ cảnh và kết quả công cụ ReAct Super-Agent.
     """
-    intent = state.get("intent", "unknown")
+    messages = state.get("messages", [])
     tool_results = state.get("tool_results", [])
     proposed_action = state.get("proposed_action")
-    retrieved_context = state.get("retrieved_context", [])
     citations = state.get("citations", [])
     user_query = state.get("user_query", "")
 
-    # Nếu là RAG và đã có sẵn câu trả lời grounded từ RAG service
-    if intent == "document_qa" and retrieved_context:
-        first_ctx = retrieved_context[0]
-        if isinstance(first_ctx, dict) and "answer" in first_ctx:
-            final_ans = first_ctx["answer"]
-            return {
-                "answer": final_ans,
-                "messages": [AIMessage(content=final_ans)],
-            }
+    # 1. Nếu Super-Agent ở vòng cuối đã tự sinh câu trả lời đầy đủ (không có tool_calls)
+    if messages:
+        last_msg = messages[-1]
+        if isinstance(last_msg, AIMessage) and last_msg.content and not getattr(last_msg, "tool_calls", None):
+            final_ans = _extract_text(last_msg.content)
+            if len(final_ans.strip()) > 15:
+                return {
+                    "answer": final_ans,
+                    "citations": citations,
+                    "proposed_action": proposed_action,
+                }
 
-    # Nếu là đề xuất đơn hàng nháp
-    if intent == "create_order_draft":
-        if proposed_action and proposed_action.get("draft_payload"):
-            payload = proposed_action["draft_payload"]
-            customer_name = payload.get("customer_name", "")
-            customer_code = payload.get("customer_code", "")
-            total_formatted = payload.get("formatted_total_amount") or payload.get("formatted_total", "")
-            items = payload.get("items", [])
+    # 2. Nếu có proposed_action (đơn hàng nháp)
+    if proposed_action:
+        payload = proposed_action.get("draft_payload") or proposed_action
+        customer_name = payload.get("customer_name", "")
+        customer_code = payload.get("customer_code", "")
+        total_formatted = payload.get("formatted_total_amount") or payload.get("formatted_total", "")
+        items = payload.get("items", [])
 
-            items_table = "\n".join([
-                f"- **{it.get('product_name')}** (`{it.get('sku')}`): "
-                f"{it.get('quantity')} cái x {it.get('formatted_unit_price') or it.get('formatted_price', '')} = **{it.get('formatted_line_total') or it.get('formatted_subtotal', '')}**"
-                for it in items
-            ])
+        items_table = "\n".join([
+            f"- **{it.get('product_name')}** (`{it.get('sku')}`): "
+            f"{it.get('quantity')} cái x {it.get('formatted_unit_price') or it.get('formatted_price', '')} = **{it.get('formatted_line_total') or it.get('formatted_subtotal', '')}**"
+            for it in items
+        ])
 
-            final_ans = (
-                f"### 📋 Đề xuất đơn hàng nháp (Chờ phê duyệt)\n\n"
-                f"Đã lập bản nháp đề xuất cho khách hàng **{customer_name}** (`{customer_code}`):\n\n"
-                f"**Danh sách sản phẩm:**\n{items_table}\n\n"
-                f"💵 **Tổng tiền tạm tính:** {total_formatted}\n\n"
-                f"> ⚠️ **Lưu ý:** Đơn hàng này đang ở trạng thái **Bản nháp chờ phê duyệt** (Human-in-the-Loop) "
-                f"và chưa có hiệu lực cho đến khi người có thẩm quyền bấm xác nhận."
-            )
-            return {
-                "answer": final_ans,
-                "messages": [AIMessage(content=final_ans)],
-            }
-        elif tool_results and not tool_results[-1].get("success", True):
-            fail_msg = tool_results[-1].get("message", "Không thể tạo đơn hàng nháp.")
-            return {
-                "answer": fail_msg,
-                "messages": [AIMessage(content=fail_msg)],
-            }
+        final_ans = (
+            f"### 📋 Đề xuất đơn hàng nháp (Chờ phê duyệt)\n\n"
+            f"Đã lập bản nháp đề xuất cho khách hàng **{customer_name}** (`{customer_code}`):\n\n"
+            f"**Danh sách sản phẩm:**\n{items_table}\n\n"
+            f"💵 **Tổng tiền tạm tính:** {total_formatted}\n\n"
+            f"> ⚠️ **Lưu ý:** Đơn hàng này đang ở trạng thái **Bản nháp chờ phê duyệt** (Human-in-the-Loop) "
+            f"và chưa có hiệu lực cho đến khi người có thẩm quyền bấm xác nhận."
+        )
+        return {
+            "answer": final_ans,
+            "messages": [AIMessage(content=final_ans)],
+            "citations": citations,
+            "proposed_action": proposed_action,
+        }
 
-    # Tổng hợp qua LLM Synthesizer với Fallback Model tự động
+    # 3. Tổng hợp qua LLM Synthesizer
     final_ans = None
     context_summary = []
-    for msg in state.get("messages", []):
+    for msg in messages:
         if isinstance(msg, ToolMessage):
             context_summary.append(f"Tool Result ({msg.name}): {msg.content}")
 
@@ -527,9 +690,8 @@ async def synthesizer_node(state: ERPAgentState) -> Dict[str, Any]:
         SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
         HumanMessage(content=(
             f"Câu hỏi người dùng: {user_query}\n\n"
-            f"Ý định: {intent}\n\n"
             f"Dữ liệu công cụ thu thập được:\n{context_text}\n\n"
-            f"Hãy tổng hợp thành phản hồi hoàn chỉnh, súc tích và chính xác bằng Tiếng Việt (sử dụng bảng Markdown chuẩn nếu có nhiều số liệu):"
+            f"Hãy tổng hợp thành phản hồi hoàn chỉnh, súc tích và chính xác bằng Tiếng Việt:"
         )),
     ]
 
@@ -538,87 +700,88 @@ async def synthesizer_node(state: ERPAgentState) -> Dict[str, Any]:
         res = await llm.ainvoke(synthesizer_prompt)
         final_ans = _extract_text(res.content)
     except Exception as e_primary:
-        logger.warning("Primary LLM (%s) failed in synthesizer: %s. Trying fallback (%s)...", settings.GEMINI_MODEL, e_primary, settings.GEMINI_FALLBACK_MODEL)
+        logger.warning("Primary LLM (%s) failed in synthesizer: %s", settings.GEMINI_MODEL, e_primary)
         try:
             llm_fallback = _get_llm(model=settings.GEMINI_FALLBACK_MODEL, temperature=0.0)
             res = await llm_fallback.ainvoke(synthesizer_prompt)
             final_ans = _extract_text(res.content)
         except Exception as e_fallback:
-            logger.warning("Fallback LLM (%s) also failed in synthesizer: %s. Using heuristic formatting.", settings.GEMINI_FALLBACK_MODEL, e_fallback)
-            last_tool_content = None
-            for msg in reversed(state.get("messages", [])):
-                if isinstance(msg, ToolMessage):
-                    last_tool_content = msg.content
-                    break
-
-            if last_tool_content:
-                final_ans = f"Kết quả từ hệ thống ERP:\n\n{last_tool_content}"
-            else:
-                final_ans = "Đã xử lý yêu cầu thành công."
+            logger.warning("Fallback LLM failed in synthesizer: %s", e_fallback)
+            final_ans = "Đã xử lý yêu cầu thành công."
 
     return {
         "answer": final_ans,
         "messages": [AIMessage(content=final_ans)],
+        "citations": citations,
+        "proposed_action": proposed_action,
     }
 
 
 # =========================================================================
-# StateGraph Assembly
+# StateGraph Assembly (ReAct Super-Agent)
 # =========================================================================
 
 def build_erp_agent_graph(checkpointer: Optional[Any] = None) -> Any:
     """
-    Xây dựng LangGraph State Machine cho ERP AI Copilot theo Blueprint Section 6.2.
+    Xây dựng LangGraph State Machine ReAct Super-Agent cho ERP AI Copilot.
+    START -> classify_intent -> (chitchat_agent -> END) OR (super_agent <-> tools -> synthesizer -> END)
     """
     workflow = StateGraph(ERPAgentState)
 
-    # 1. Thêm các Nodes
+    # 1. Thêm các Nodes chính
     workflow.add_node("classify_intent", classify_intent_node)
+    workflow.add_node("super_agent", super_agent_node)
+    workflow.add_node("tools", super_tools_node)
+    workflow.add_node("chitchat_agent", chitchat_agent_node)
+    workflow.add_node("synthesizer", synthesizer_node)
+
+    # Thêm các nodes legacy để đảm bảo không lỗi nếu có component gọi
     workflow.add_node("erp_agent", erp_agent_node)
     workflow.add_node("erp_tools", erp_tools_node)
     workflow.add_node("rag_agent", rag_agent_node)
     workflow.add_node("draft_order_agent", draft_order_agent_node)
-    workflow.add_node("chitchat_agent", chitchat_agent_node)
     workflow.add_node("clarify_agent", clarify_agent_node)
-    workflow.add_node("synthesizer", synthesizer_node)
 
     # 2. Định tuyến START -> classify_intent
     workflow.add_edge(START, "classify_intent")
 
-    # 3. Conditional Edge từ classify_intent sang các branch agents
+    # 3. Conditional Edge từ classify_intent sang chitchat hoặc super_agent
     workflow.add_conditional_edges(
         "classify_intent",
         route_by_intent,
         {
-            "erp_agent": "erp_agent",
-            "rag_agent": "rag_agent",
-            "draft_order_agent": "draft_order_agent",
             "chitchat_agent": "chitchat_agent",
-            "clarify_agent": "clarify_agent",
+            "super_agent": "super_agent",
+            "erp_agent": "super_agent",
+            "rag_agent": "super_agent",
+            "draft_order_agent": "super_agent",
+            "clarify_agent": "super_agent",
         },
     )
 
-    # 4. Conditional Edge từ erp_agent sang erp_tools hoặc synthesizer
+    # 4. Conditional Edge từ super_agent: kiểm tra lặp tiếp hay kết thúc
     workflow.add_conditional_edges(
-        "erp_agent",
-        should_call_erp_tools,
+        "super_agent",
+        should_continue,
         {
-            "erp_tools": "erp_tools",
+            "tools": "tools",
             "synthesizer": "synthesizer",
         },
     )
 
-    # 5. Edges chuyển tiếp về synthesizer
-    workflow.add_edge("erp_tools", "synthesizer")
-    workflow.add_edge("rag_agent", "synthesizer")
-    workflow.add_edge("draft_order_agent", "synthesizer")
+    # 5. Tools lặp ngược lại super_agent để LLM đọc quan sát và quyết định bước tiếp theo
+    workflow.add_edge("tools", "super_agent")
 
     # 6. Edges kết thúc
     workflow.add_edge("chitchat_agent", END)
-    workflow.add_edge("clarify_agent", END)
     workflow.add_edge("synthesizer", END)
 
-    # Compile graph với checkpointer nếu có (MemorySaver cho hội thoại đa vòng)
+    # Legacy node fallback edges
+    workflow.add_edge("erp_tools", "synthesizer")
+    workflow.add_edge("rag_agent", "synthesizer")
+    workflow.add_edge("draft_order_agent", "synthesizer")
+    workflow.add_edge("clarify_agent", END)
+
     return workflow.compile(checkpointer=checkpointer)
 
 

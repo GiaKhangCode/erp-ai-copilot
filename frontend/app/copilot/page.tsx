@@ -1117,14 +1117,14 @@ function CopilotDashboardWorkspace() {
                 type="button"
                 onClick={() => handleSendMessage()}
                 disabled={isLoading || !inputQuery.trim()}
-                className="bg-[#0066FF] hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-all shadow-xs flex items-center gap-1.5 active:scale-95 disabled:cursor-not-allowed cursor-pointer"
+                title="Gửi (Enter)"
+                className="bg-[#0066FF] hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white w-8 h-8 rounded-xl transition-all shadow-xs flex items-center justify-center shrink-0 active:scale-95 disabled:cursor-not-allowed cursor-pointer"
               >
                 {isLoading ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Send className="w-3.5 h-3.5" />
                 )}
-                <span>Gửi (Enter)</span>
               </button>
             </div>
           </div>

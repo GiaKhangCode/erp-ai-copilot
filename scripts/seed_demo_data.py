@@ -55,37 +55,208 @@ async def seed_data():
                 "ON ai.documents (access_scope);"
             )
         )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_documents_owner_id "
-                "ON ai.documents (owner_id);"
-            )
-        )
+        # Ensure User table has newly added RBAC fields
+        await conn.execute(text("ALTER TABLE erp.users ADD COLUMN IF NOT EXISTS phone VARCHAR(30);"))
+        await conn.execute(text("ALTER TABLE erp.users ADD COLUMN IF NOT EXISTS department VARCHAR(100);"))
+        await conn.execute(text("ALTER TABLE erp.users ADD COLUMN IF NOT EXISTS job_title VARCHAR(100);"))
+        await conn.execute(text("ALTER TABLE erp.users ADD COLUMN IF NOT EXISTS is_superuser BOOLEAN DEFAULT FALSE NOT NULL;"))
+        await conn.execute(text("ALTER TABLE erp.users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP WITH TIME ZONE;"))
+        await conn.execute(text("ALTER TABLE erp.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();"))
+
 
         await conn.execute(
             text(
                 "TRUNCATE erp.sales_order_items, erp.sales_orders, erp.inventory, "
-                "erp.products, erp.customers, erp.warehouses, erp.users, erp.idempotency_keys "
-                "RESTART IDENTITY CASCADE;"
+                "erp.products, erp.customers, erp.warehouses, erp.user_sessions, "
+                "erp.user_roles, erp.role_permissions, erp.permissions, erp.roles, "
+                "erp.users, erp.idempotency_keys RESTART IDENTITY CASCADE;"
             )
         )
 
+    from app.erp.models import Role, Permission, RolePermission, UserRole
+    import uuid
+
     async with async_session_factory() as session:
-        # 1. Users
-        admin_user = User(
-            email="admin@erpcopilot.vn",
-            password_hash=get_password_hash("admin123"),
-            full_name="Quản Trị Viên Hệ Thống",
-            role="admin",
-        )
-        sales_user = User(
-            email="sales@erpcopilot.vn",
-            password_hash=get_password_hash("sales123"),
-            full_name="Nguyễn Văn Bán Hàng",
-            role="sales_rep",
-        )
-        session.add_all([admin_user, sales_user])
+        # 1. Khởi tạo danh mục Permissions (Quyền hạn nguyên tử)
+        permissions_data = [
+            # Đơn hàng
+            ("orders:read", "orders", "Xem đơn hàng", "Xem danh sách và chi tiết đơn hàng"),
+            ("orders:read_all", "orders", "Xem toàn bộ đơn hàng", "Xem đơn hàng của tất cả nhân viên"),
+            ("orders:create", "orders", "Tạo đơn hàng", "Tạo mới đơn hàng nháp"),
+            ("orders:approve", "orders", "Phê duyệt đơn hàng", "Phê duyệt đơn hàng nháp"),
+            ("orders:reject", "orders", "Từ chối đơn hàng", "Từ chối đơn hàng nháp"),
+            ("orders:cancel", "orders", "Hủy đơn hàng", "Hủy đơn hàng do mình tạo"),
+            # Khách hàng
+            ("customers:read", "customers", "Xem khách hàng", "Tra cứu thông tin khách hàng"),
+            ("customers:write", "customers", "Quản lý khách hàng", "Thêm mới và cập nhật thông tin khách hàng"),
+            # Sản phẩm & Tồn kho
+            ("products:read", "products", "Xem sản phẩm & giá", "Tra cứu sản phẩm và giá niêm yết"),
+            ("products:write", "products", "Quản lý sản phẩm", "Thêm, cập nhật sản phẩm và giá bán"),
+            ("inventory:read", "inventory", "Xem tồn kho", "Tra cứu số lượng tồn kho và khả dụng"),
+            ("inventory:write", "inventory", "Điều chỉnh kho", "Cập nhật số lượng kiểm kê và chuyển kho"),
+            # Báo cáo
+            ("reports:revenue_view", "reports", "Xem báo cáo doanh thu", "Xem báo cáo doanh thu và biểu đồ phân tích"),
+            ("reports:export", "reports", "Xuất báo cáo", "Xuất file báo cáo tài chính"),
+            # Tài liệu & RAG
+            ("documents:read", "documents", "Tra cứu tài liệu", "Xem và tìm kiếm tài liệu chung"),
+            ("documents:read_confidential", "documents", "Xem tài liệu mật", "Đọc các tài liệu quản trị nội bộ bí mật"),
+            ("documents:upload", "documents", "Tải lên tài liệu", "Nạp tài liệu vào hệ thống RAG"),
+            ("documents:delete", "documents", "Xóa tài liệu", "Xóa tài liệu khỏi hệ thống"),
+            # Quản trị
+            ("users:read", "users", "Xem người dùng", "Xem danh sách nhân sự"),
+            ("users:write", "users", "Quản lý người dùng", "Tạo, cập nhật và khóa tài khoản nhân sự"),
+            ("roles:manage", "roles", "Quản lý phân quyền", "Tạo vai trò và cấu hình ma trận quyền hạn"),
+        ]
+
+        perm_dict = {}
+        for code, mod, name, desc in permissions_data:
+            p = Permission(
+                id=uuid.uuid4(),
+                code=code,
+                module=mod,
+                name=name,
+                description=desc,
+            )
+            session.add(p)
+            perm_dict[code] = p
+
         await session.flush()
+
+        # 2. Khởi tạo 5 Vai trò chuẩn (5 Core Roles)
+        roles_data = [
+            ("admin", "Quản Trị Viên", "Toàn quyền cấu hình, quản trị người dùng và giám sát hệ thống", True),
+            ("director", "Ban Giám Đốc", "Xem báo cáo tài chính toàn diện, phê duyệt đơn hàng lớn và đọc tài liệu mật", True),
+            ("sales_manager", "Quản Lý Kinh Doanh", "Phê duyệt đơn hàng, xem báo cáo doanh thu và giám sát toàn bộ đơn bán", True),
+            ("sales_rep", "Nhân Viên Kinh Doanh", "Lập đơn hàng nháp, tra cứu tồn kho, tìm kiếm khách hàng và hỏi đáp quy chế", True),
+            ("warehouse_keeper", "Thủ Kho", "Quản lý tồn kho thực tế, xem các đơn hàng đã chốt để đóng gói xuất hàng", True),
+        ]
+
+        role_dict = {}
+        for code, name, desc, is_sys in roles_data:
+            r = Role(
+                id=uuid.uuid4(),
+                code=code,
+                name=name,
+                description=desc,
+                is_system=is_sys,
+            )
+            session.add(r)
+            role_dict[code] = r
+
+        await session.flush()
+
+        # 3. Gán Quyền cho 5 Vai trò theo Ma trận Phân quyền
+        role_perm_mappings = {
+            "admin": list(perm_dict.keys()),  # Toàn quyền
+            "director": [
+                "reports:revenue_view", "reports:export",
+                "orders:read", "orders:read_all", "orders:approve",
+                "customers:read", "products:read", "inventory:read",
+                "documents:read", "documents:read_confidential",
+            ],
+            "sales_manager": [
+                "reports:revenue_view", "reports:export",
+                "orders:read", "orders:read_all", "orders:create", "orders:approve", "orders:reject",
+                "customers:read", "customers:write",
+                "products:read", "inventory:read",
+                "documents:read",
+            ],
+            "sales_rep": [
+                "orders:read", "orders:create", "orders:cancel",
+                "customers:read", "products:read", "inventory:read",
+                "documents:read",
+            ],
+            "warehouse_keeper": [
+                "inventory:read", "inventory:write",
+                "orders:read",
+                "products:read",
+                "customers:read",
+                "documents:read",
+            ],
+        }
+
+        for role_code, perm_codes in role_perm_mappings.items():
+            r = role_dict[role_code]
+            for p_code in perm_codes:
+                if p_code in perm_dict:
+                    session.add(RolePermission(role_id=r.id, permission_id=perm_dict[p_code].id))
+
+        await session.flush()
+
+        # 4. Khởi tạo 5 Người Dùng Mẫu ứng với 5 Vai Trò
+        users_seed_data = [
+            {
+                "email": "admin@erpcopilot.vn",
+                "password": "admin123",
+                "full_name": "Quản Trị Viên Hệ Thống",
+                "role_code": "admin",
+                "department": "Công nghệ thông tin",
+                "job_title": "IT Director",
+                "is_superuser": True,
+            },
+            {
+                "email": "director@erpcopilot.vn",
+                "password": "director123",
+                "full_name": "Trần Thị Ban Giám Đốc",
+                "role_code": "director",
+                "department": "Ban Điều Hành",
+                "job_title": "Managing Director",
+                "is_superuser": False,
+            },
+            {
+                "email": "manager@erpcopilot.vn",
+                "password": "manager123",
+                "full_name": "Lê Văn Quản Lý",
+                "role_code": "sales_manager",
+                "department": "Phòng Kinh Doanh",
+                "job_title": "Head of Sales",
+                "is_superuser": False,
+            },
+            {
+                "email": "sales@erpcopilot.vn",
+                "password": "sales123",
+                "full_name": "Nguyễn Văn Bán Hàng",
+                "role_code": "sales_rep",
+                "department": "Phòng Kinh Doanh",
+                "job_title": "Sales Executive",
+                "is_superuser": False,
+            },
+            {
+                "email": "warehouse@erpcopilot.vn",
+                "password": "warehouse123",
+                "full_name": "Phạm Văn Thủ Kho",
+                "role_code": "warehouse_keeper",
+                "department": "Phòng Kho Vận",
+                "job_title": "Warehouse Supervisor",
+                "is_superuser": False,
+            },
+        ]
+
+        created_users = {}
+        for u_data in users_seed_data:
+            user = User(
+                id=uuid.uuid4(),
+                email=u_data["email"],
+                password_hash=get_password_hash(u_data["password"]),
+                full_name=u_data["full_name"],
+                role=u_data["role_code"],
+                department=u_data["department"],
+                job_title=u_data["job_title"],
+                is_active=True,
+                is_superuser=u_data["is_superuser"],
+            )
+            session.add(user)
+            created_users[u_data["role_code"]] = user
+
+        await session.flush()
+
+        # Gán UserRole
+        for role_code, user in created_users.items():
+            r = role_dict[role_code]
+            session.add(UserRole(user_id=user.id, role_id=r.id))
+
+        admin_user = created_users["admin"]
+        sales_user = created_users["sales_rep"]
 
         # 2. Warehouses
         wh_hn = Warehouse(code="WH-HN", name="Kho Tổng Hà Nội")

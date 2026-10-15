@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_user, require_role
+from app.auth.dependencies import (
+    get_current_user,
+    require_role,
+    require_permission,
+    get_current_user_permissions,
+)
 from app.db.session import get_db
 from app.document_ai.email_parser import parse_email_bytes, parse_raw_order_text
 from app.document_ai.extractor import get_order_extractor
@@ -58,7 +63,7 @@ class ApprovalItemResponse(BaseModel):
 )
 async def ingest_order_from_text(
     payload: TextOrderIngestRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("orders:create")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -89,7 +94,7 @@ async def ingest_order_from_text(
 )
 async def ingest_order_from_eml(
     file: UploadFile = File(..., description="Tệp email định dạng .eml"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("orders:create")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -127,7 +132,7 @@ async def ingest_order_from_eml(
 )
 async def ingest_order_from_document(
     file: UploadFile = File(..., description="Tệp đơn đặt hàng PDF, DOCX"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("orders:create")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -182,14 +187,22 @@ async def list_approvals(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
+    user_permissions: set[str] = Depends(get_current_user_permissions),
     db: AsyncSession = Depends(get_db),
 ):
-    """Lấy danh sách yêu cầu phê duyệt chờ xử lý."""
+    """
+    Lấy danh sách yêu cầu phê duyệt.
+    Tự động áp dụng Data Scoping: Người dùng không có quyền 'orders:approve' (sales_rep) chỉ xem được yêu cầu do chính mình gửi.
+    """
+    has_approve_perm = "*" in user_permissions or "orders:approve" in user_permissions
+    requested_by_filter = None if has_approve_perm else current_user.id
+
     items = await ApprovalService.list_approvals(
         session=db,
         status=status_filter,
         limit=limit,
         offset=offset,
+        requested_by=requested_by_filter,
     )
     return [
         ApprovalItemResponse(
@@ -215,9 +228,17 @@ async def list_approvals(
 async def get_approval_detail(
     approval_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
+    user_permissions: set[str] = Depends(get_current_user_permissions),
     db: AsyncSession = Depends(get_db),
 ):
+    """Xem chi tiết một yêu cầu phê duyệt (có kiểm tra quyền sở hữu đối với sales_rep)."""
     item = await ApprovalService.get_approval_by_id(db, approval_id)
+    has_approve_perm = "*" in user_permissions or "orders:approve" in user_permissions
+    if not has_approve_perm and item.requested_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bạn không có quyền xem yêu cầu phê duyệt của nhân viên khác.",
+        )
     return ApprovalItemResponse(
         id=item.id,
         action_type=item.action_type,
@@ -238,10 +259,10 @@ async def get_approval_detail(
 )
 async def approve_order(
     approval_id: uuid.UUID,
-    current_user: User = Depends(require_role(["admin", "sales_manager"])),
+    current_user: User = Depends(require_permission("orders:approve")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Chỉ Quản trị viên (admin) hoặc Quản lý bán hàng (sales_manager) mới có quyền duyệt đơn."""
+    """Yêu cầu quyền 'orders:approve' (admin, director, sales_manager). Áp dụng Nguyên tắc 4 mắt."""
     return await ApprovalService.approve_request(
         session=db,
         approval_id=approval_id,
@@ -258,10 +279,10 @@ async def approve_order(
 async def reject_order(
     approval_id: uuid.UUID,
     payload: Optional[RejectRequest] = None,
-    current_user: User = Depends(require_role(["admin", "sales_manager"])),
+    current_user: User = Depends(require_permission("orders:reject")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Từ chối đơn hàng kèm lý do."""
+    """Yêu cầu quyền 'orders:reject' (admin, sales_manager)."""
     reason = payload.reason if payload else None
     return await ApprovalService.reject_request(
         session=db,
@@ -269,3 +290,4 @@ async def reject_order(
         approver_id=current_user.id,
         reason=reason,
     )
+

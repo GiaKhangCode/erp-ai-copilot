@@ -16,8 +16,26 @@ import {
 } from "lucide-react";
 import { fetchRevenueReport, RevenueReportData } from "@/lib/api";
 import { formatVND } from "@/lib/utils";
+import { PermissionGate, AccessDeniedView } from "@/components/permission-gate";
 
 export default function ReportsPage() {
+  return (
+    <PermissionGate
+      permission="reports:revenue_view"
+      fallback={
+        <AccessDeniedView
+          permission="reports:revenue_view"
+          title="Báo cáo & Phân tích Doanh thu"
+          description="Tài khoản của bạn không được phân quyền xem báo cáo tài chính và doanh thu doanh nghiệp."
+        />
+      }
+    >
+      <ReportsContent />
+    </PermissionGate>
+  );
+}
+
+function ReportsContent() {
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [selectedMonth, setSelectedMonth] = useState<string>("all");
   const [reportData, setReportData] = useState<RevenueReportData | null>(null);
@@ -32,7 +50,11 @@ export default function ReportsPage() {
       const data = await fetchRevenueReport(selectedYear, monthVal);
       setReportData(data);
     } catch (err: any) {
-      setErrorMsg("Lỗi khi tải báo cáo doanh thu: " + err.message);
+      if (err.message?.includes("403")) {
+        setErrorMsg("Tài khoản của bạn không có quyền xem báo cáo doanh thu (403 Forbidden).");
+      } else {
+        setErrorMsg("Lỗi khi tải báo cáo doanh thu: " + err.message);
+      }
     } finally {
       setLoading(false);
     }

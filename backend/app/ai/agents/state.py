@@ -110,3 +110,5 @@ class ERPAgentState(TypedDict, total=False):
     answer: str
     citations: List[Dict[str, Any]]
     error: Optional[str]
+    iteration: Optional[int]
+    thought_steps: Optional[List[Dict[str, Any]]]

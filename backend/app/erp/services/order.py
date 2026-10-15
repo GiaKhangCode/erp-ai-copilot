@@ -21,8 +21,9 @@ class SalesOrderService:
         status: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        created_by: Optional[uuid.UUID] = None,
     ) -> List[SalesOrder]:
-        """Lấy danh sách đơn hàng bán có lọc theo khách hàng và trạng thái."""
+        """Lấy danh sách đơn hàng bán có lọc theo khách hàng, trạng thái và người tạo (Data Scoping)."""
         stmt = (
             select(SalesOrder)
             .join(SalesOrder.customer)
@@ -35,6 +36,8 @@ class SalesOrderService:
             stmt = stmt.where(Customer.code == customer_code)
         if status:
             stmt = stmt.where(SalesOrder.status == status)
+        if created_by:
+            stmt = stmt.where(SalesOrder.created_by == created_by)
 
         stmt = stmt.order_by(SalesOrder.created_at.desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)

@@ -26,11 +26,15 @@ class CustomerService:
         limit: int = 50,
         offset: int = 0,
         status: Optional[str] = None,
+        search: Optional[str] = None,
     ) -> List[Customer]:
-        """Lấy danh sách khách hàng có phân trang và lọc trạng thái."""
+        """Lấy danh sách khách hàng có phân trang, lọc trạng thái và tìm kiếm theo tên hoặc mã code."""
         stmt = select(Customer)
         if status:
             stmt = stmt.where(Customer.status == status)
+        if search:
+            pattern = f"%{search.strip()}%"
+            stmt = stmt.where((Customer.name.ilike(pattern)) | (Customer.code.ilike(pattern)))
         stmt = stmt.order_by(Customer.code).limit(limit).offset(offset)
         result = await session.execute(stmt)
         return list(result.scalars().all())

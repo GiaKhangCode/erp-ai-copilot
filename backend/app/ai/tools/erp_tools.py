@@ -3,8 +3,10 @@ import logging
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from langchain_core.tools import tool
+from sqlalchemy import select
 
 from app.db.session import async_session_factory
+from app.erp.models import Customer, Product
 from app.erp.services.inventory import InventoryService
 from app.erp.services.product import ProductService
 from app.erp.services.customer import CustomerService
@@ -24,23 +26,36 @@ async def get_inventory(sku: Optional[str] = None, warehouse_code: Optional[str]
     và số lượng khả dụng có thể bán (quantity_available = on_hand - reserved).
 
     Args:
-        sku: Mã định danh sản phẩm (Ví dụ: 'SKU-001', 'SKU-002'). Nếu không truyền (None), sẽ tra cứu tồn kho của TẤT CẢ các sản phẩm trong hệ thống.
+        sku: Mã SKU sản phẩm (Ví dụ: 'SKU-001', 'SKU-002') HOẶC tên sản phẩm (Ví dụ: 'Chuột Ergonomic', 'Laptop Pro'). Nếu không truyền (None), tra cứu trên tất cả sản phẩm.
         warehouse_code: Mã kho hàng tùy chọn (Ví dụ: 'WH-HN', 'WH-HCM'). Nếu không cung cấp, tra cứu trên tất cả các kho.
     """
-    clean_sku = sku.strip().upper() if sku else None
+    clean_sku = sku.strip() if sku else None
     clean_wh = warehouse_code.strip().upper() if warehouse_code else None
 
     async with async_session_factory() as session:
+        # Nếu clean_sku không bắt đầu bằng 'SKU-', thử tìm mã SKU theo tên sản phẩm
+        resolved_sku = clean_sku
+        if clean_sku and not clean_sku.upper().startswith("SKU-"):
+            stmt = select(Product).where(Product.name.ilike(f"%{clean_sku}%")).limit(1)
+            res = await session.execute(stmt)
+            matched_prod = res.scalar_one_or_none()
+            if matched_prod:
+                resolved_sku = matched_prod.sku
+            else:
+                resolved_sku = clean_sku.upper()
+        elif clean_sku:
+            resolved_sku = clean_sku.upper()
+
         items = await InventoryService.get_inventory(
             session=session,
-            sku=clean_sku,
+            sku=resolved_sku,
             warehouse_code=clean_wh,
         )
 
         if not items:
             msg = f"Không tìm thấy dữ liệu tồn kho"
             if clean_sku:
-                msg += f" cho sản phẩm SKU '{clean_sku}'"
+                msg += f" cho sản phẩm '{clean_sku}'"
             if clean_wh:
                 msg += f" tại kho '{clean_wh}'"
             return json.dumps({
@@ -55,7 +70,7 @@ async def get_inventory(sku: Optional[str] = None, warehouse_code: Optional[str]
 
         return json.dumps({
             "found": True,
-            "sku_filter": clean_sku,
+            "sku_filter": resolved_sku,
             "warehouse_filter": clean_wh,
             "total_items": len(items),
             "total_available": total_available,
@@ -77,27 +92,33 @@ async def get_inventory(sku: Optional[str] = None, warehouse_code: Optional[str]
 
 
 @tool
-async def list_products(is_active: Optional[bool] = None, limit: int = 50) -> str:
+async def list_products(search: Optional[str] = None, is_active: Optional[bool] = None, limit: int = 50) -> str:
     """
     Tra cứu danh sách tất cả các mặt hàng / sản phẩm đang kinh doanh trong hệ thống ERP.
+    Hỗ trợ tìm kiếm theo từ khóa (tên sản phẩm hoặc mã SKU).
     Trả về danh sách sản phẩm gồm mã SKU, tên sản phẩm, đơn giá niêm yết (VND), và trạng thái hoạt động.
-    Sử dụng công cụ này khi người dùng hỏi: 'Tôi đang có những mặt hàng nào?', 'Danh sách sản phẩm', 'Các mặt hàng hiện có', 'Bảng giá sản phẩm'.
 
     Args:
+        search: Từ khóa tìm kiếm theo tên hoặc mã SKU (Ví dụ: 'chuột', 'laptop', 'SKU-001'). Tùy chọn.
         is_active: Lọc sản phẩm đang hoạt động (True/False). Mặc định None (lấy tất cả).
         limit: Số lượng sản phẩm tối đa (mặc định: 50).
     """
+    clean_search = search.strip() if search else None
     async with async_session_factory() as session:
         prods = await ProductService.list_products(
             session=session,
             limit=min(limit, 100),
             is_active=is_active,
+            search=clean_search,
         )
         if not prods:
+            msg = "Không tìm thấy sản phẩm nào trong hệ thống ERP."
+            if clean_search:
+                msg = f"Không tìm thấy sản phẩm nào phù hợp với từ khóa '{clean_search}' trong hệ thống ERP."
             return json.dumps({
                 "found": False,
                 "total": 0,
-                "message": "Không tìm thấy sản phẩm nào trong hệ thống ERP.",
+                "message": msg,
                 "products": [],
             }, ensure_ascii=False)
 
@@ -120,80 +141,100 @@ async def list_products(is_active: Optional[bool] = None, limit: int = 50) -> st
 @tool
 async def get_product(sku: str) -> str:
     """
-    Tra cứu thông tin chi tiết của một sản phẩm theo mã SKU, bao gồm tên sản phẩm,
-    giá niêm yết chính thức (VND), và trạng thái kinh doanh.
+    Tra cứu thông tin chi tiết của một sản phẩm theo mã SKU hoặc tên sản phẩm,
+    bao gồm mã SKU, tên sản phẩm, giá niêm yết chính thức (VND), và trạng thái kinh doanh.
 
     Args:
-        sku: Mã SKU sản phẩm (Ví dụ: 'SKU-001', 'SKU-002', 'SKU-003').
+        sku: Mã SKU sản phẩm (Ví dụ: 'SKU-001') HOẶC tên sản phẩm (Ví dụ: 'Chuột Ergonomic', 'Laptop Pro').
     """
-    clean_sku = sku.strip().upper()
+    clean_term = sku.strip()
     async with async_session_factory() as session:
+        prod = None
         try:
-            prod = await ProductService.get_by_sku(session=session, sku=clean_sku)
-            return json.dumps({
-                "found": True,
-                "sku": prod.sku,
-                "name": prod.name,
-                "unit_price": float(prod.unit_price),
-                "formatted_price": f"{prod.unit_price:,.0f} VND",
-                "is_active": prod.is_active,
-            }, ensure_ascii=False)
+            prod = await ProductService.get_by_sku(session=session, sku=clean_term.upper())
         except NotFoundException:
+            stmt = select(Product).where(Product.name.ilike(f"%{clean_term}%")).limit(1)
+            res = await session.execute(stmt)
+            prod = res.scalar_one_or_none()
+
+        if not prod:
             return json.dumps({
                 "found": False,
-                "message": f"Không tìm thấy sản phẩm với mã SKU '{clean_sku}' trong hệ thống ERP.",
+                "message": f"Không tìm thấy sản phẩm với thông tin '{clean_term}' trong hệ thống ERP.",
             }, ensure_ascii=False)
+
+        return json.dumps({
+            "found": True,
+            "sku": prod.sku,
+            "name": prod.name,
+            "unit_price": float(prod.unit_price),
+            "formatted_price": f"{prod.unit_price:,.0f} VND",
+            "is_active": prod.is_active,
+        }, ensure_ascii=False)
 
 
 @tool
 async def get_customer(customer_code: str) -> str:
     """
-    Tra cứu thông tin khách hàng doanh nghiệp hoặc cá nhân theo mã khách hàng (Customer Code).
-    Trả về tên khách hàng, email liên hệ, và trạng thái tài khoản.
+    Tra cứu thông tin khách hàng doanh nghiệp hoặc cá nhân theo mã khách hàng (Customer Code) hoặc tên công ty/khách hàng.
+    Trả về mã code, tên khách hàng, email liên hệ, và trạng thái tài khoản.
 
     Args:
-        customer_code: Mã khách hàng (Ví dụ: 'CUS-0001', 'CUS-0002').
+        customer_code: Mã khách hàng (Ví dụ: 'CUS-0001') HOẶC tên công ty/khách hàng (Ví dụ: 'Công ty Á Châu', 'Toàn Cầu').
     """
-    clean_code = customer_code.strip().upper()
+    clean_term = customer_code.strip()
     async with async_session_factory() as session:
+        cust = None
         try:
-            cust = await CustomerService.get_by_code(session=session, code=clean_code)
-            return json.dumps({
-                "found": True,
-                "customer_code": cust.code,
-                "name": cust.name,
-                "email": cust.email,
-                "status": cust.status,
-            }, ensure_ascii=False)
+            cust = await CustomerService.get_by_code(session=session, code=clean_term.upper())
         except NotFoundException:
+            stmt = select(Customer).where(Customer.name.ilike(f"%{clean_term}%")).limit(1)
+            res = await session.execute(stmt)
+            cust = res.scalar_one_or_none()
+
+        if not cust:
             return json.dumps({
                 "found": False,
-                "message": f"Không tìm thấy khách hàng với mã '{clean_code}' trong hệ thống ERP.",
+                "message": f"Không tìm thấy khách hàng với thông tin '{clean_term}' trong hệ thống ERP.",
             }, ensure_ascii=False)
+
+        return json.dumps({
+            "found": True,
+            "customer_code": cust.code,
+            "name": cust.name,
+            "email": cust.email,
+            "status": cust.status,
+        }, ensure_ascii=False)
 
 
 @tool
-async def list_customers(status: Optional[str] = None, limit: int = 50) -> str:
+async def list_customers(search: Optional[str] = None, status: Optional[str] = None, limit: int = 50) -> str:
     """
     Tra cứu danh sách khách hàng doanh nghiệp hoặc cá nhân trong hệ thống ERP.
+    Hỗ trợ tìm kiếm theo từ khóa (tên khách hàng hoặc mã code).
     Trả về danh sách khách hàng gồm mã code, tên khách hàng, email và trạng thái tài khoản.
-    Dùng khi người dùng hỏi: 'Danh sách khách hàng', 'Có những khách hàng nào?', 'Xem các khách hàng'.
 
     Args:
+        search: Từ khóa tìm kiếm theo tên hoặc mã khách hàng (Ví dụ: 'Á Châu', 'Toàn Cầu', 'CUS-0001'). Tùy chọn.
         status: Lọc theo trạng thái ('active', 'inactive'). Mặc định None (tất cả).
         limit: Số lượng khách hàng tối đa (mặc định: 50).
     """
+    clean_search = search.strip() if search else None
     async with async_session_factory() as session:
         custs = await CustomerService.list_customers(
             session=session,
             limit=min(limit, 100),
             status=status,
+            search=clean_search,
         )
         if not custs:
+            msg = "Không tìm thấy khách hàng nào trong hệ thống ERP."
+            if clean_search:
+                msg = f"Không tìm thấy khách hàng nào phù hợp với từ khóa '{clean_search}' trong hệ thống ERP."
             return json.dumps({
                 "found": False,
                 "total": 0,
-                "message": "Không tìm thấy khách hàng nào trong hệ thống ERP.",
+                "message": msg,
                 "customers": [],
             }, ensure_ascii=False)
 
@@ -230,12 +271,22 @@ async def get_sales_orders(
     clean_code = customer_code.strip().upper() if customer_code else None
     clean_status = status.strip().lower() if status else None
 
+    user_ctx = get_current_user_context()
+    created_by_filter = None
+    if user_ctx.user_role == "sales_rep" and user_ctx.user_id:
+        try:
+            import uuid as _uuid
+            created_by_filter = _uuid.UUID(str(user_ctx.user_id))
+        except Exception:
+            pass
+
     async with async_session_factory() as session:
         orders = await SalesOrderService.list_orders(
             session=session,
             customer_code=clean_code,
             status=clean_status,
             limit=min(limit, 20),
+            created_by=created_by_filter,
         )
 
         if not orders:
@@ -317,15 +368,14 @@ async def propose_sales_order_draft(
 ) -> str:
     """
     Đề xuất lập bản nháp đơn hàng bán (Draft Order Proposal) sau khi đã trích xuất đầy đủ thông tin.
-    Công cụ này sẽ kiểm tra sự tồn tại của khách hàng, xác thực mã SKU, tự động đối chiếu giá niêm yết
-    trong cơ sở dữ liệu và tính toán tổng tiền.
-    LƯU Ý: Công cụ này KHÔNG tự động chốt đơn mà chỉ lập bản đề xuất để người dùng xác nhận (Human-In-The-Loop).
+    Công cụ này sẽ kiểm tra khách hàng, xác thực sản phẩm, tự động snapshot giá niêm yết trong CSDL ERP và tính tổng tiền.
+    LƯU Ý: Công cụ này KHÔNG tự động chốt đơn mà lập bản đề xuất để người dùng xác nhận (Human-In-The-Loop).
 
     Args:
-        customer_code: Mã khách hàng (Ví dụ: 'CUS-0001').
-        items: Danh sách sản phẩm và số lượng đặt hàng, ví dụ: [{'sku': 'SKU-001', 'quantity': 2}]
+        customer_code: Mã khách hàng (Ví dụ: 'CUS-0001') HOẶC Tên công ty / Tên khách hàng (Ví dụ: 'Công ty Á Châu', 'Tập đoàn Bán lẻ Toàn Cầu').
+        items: Danh sách sản phẩm và số lượng đặt hàng, ví dụ: [{'sku': 'SKU-001', 'quantity': 2}] hoặc [{'sku': 'Chuột Ergonomic', 'quantity': 2}].
     """
-    clean_code = customer_code.strip().upper()
+    clean_code = customer_code.strip()
     if not items:
         return json.dumps({
             "success": False,
@@ -333,13 +383,19 @@ async def propose_sales_order_draft(
         }, ensure_ascii=False)
 
     async with async_session_factory() as session:
-        # 1. Validate customer
+        # 1. Validate customer (hỗ trợ cả Mã khách hàng lẫn Tên khách hàng)
+        cust = None
         try:
-            cust = await CustomerService.get_by_code(session=session, code=clean_code)
+            cust = await CustomerService.get_by_code(session=session, code=clean_code.upper())
         except NotFoundException:
+            stmt = select(Customer).where(Customer.name.ilike(f"%{clean_code}%")).limit(1)
+            res = await session.execute(stmt)
+            cust = res.scalar_one_or_none()
+
+        if not cust:
             return json.dumps({
                 "success": False,
-                "message": f"Không thể lập đơn nháp: Khách hàng '{clean_code}' không tồn tại trong hệ thống.",
+                "message": f"Không thể lập đơn nháp: Không tìm thấy khách hàng nào với thông tin '{clean_code}' trong hệ thống ERP.",
             }, ensure_ascii=False)
 
         # 2. Validate products and calculate prices using DB truth
@@ -347,33 +403,45 @@ async def propose_sales_order_draft(
         total_amount = Decimal("0.00")
 
         for idx, item in enumerate(items):
-            raw_sku = item.get("sku", "").strip().upper()
+            raw_sku = str(item.get("sku") or item.get("product_name") or "").strip()
             qty = item.get("quantity", 0)
 
             if not raw_sku:
                 return json.dumps({
                     "success": False,
-                    "message": f"Dòng hàng thứ {idx+1} thiếu mã SKU.",
+                    "message": f"Dòng hàng thứ {idx+1} thiếu mã SKU hoặc tên sản phẩm.",
                 }, ensure_ascii=False)
 
             if not isinstance(qty, int) or qty <= 0:
-                return json.dumps({
-                    "success": False,
-                    "message": f"Số lượng cho sản phẩm '{raw_sku}' phải là số nguyên dương lớn hơn 0.",
-                }, ensure_ascii=False)
+                try:
+                    qty = int(qty)
+                except Exception:
+                    qty = 0
+                if qty <= 0:
+                    return json.dumps({
+                        "success": False,
+                        "message": f"Số lượng cho sản phẩm '{raw_sku}' phải là số nguyên dương lớn hơn 0.",
+                    }, ensure_ascii=False)
 
+            # Thử tìm theo mã SKU trước, nếu không thấy thì tìm theo tên sản phẩm
+            prod = None
             try:
-                prod = await ProductService.get_by_sku(session=session, sku=raw_sku)
+                prod = await ProductService.get_by_sku(session=session, sku=raw_sku.upper())
             except NotFoundException:
+                stmt = select(Product).where(Product.name.ilike(f"%{raw_sku}%")).limit(1)
+                res = await session.execute(stmt)
+                prod = res.scalar_one_or_none()
+
+            if not prod:
                 return json.dumps({
                     "success": False,
-                    "message": f"Sản phẩm với mã SKU '{raw_sku}' không tồn tại trong danh mục ERP.",
+                    "message": f"Sản phẩm với thông tin '{raw_sku}' không tồn tại trong danh mục ERP.",
                 }, ensure_ascii=False)
 
             if not prod.is_active:
                 return json.dumps({
                     "success": False,
-                    "message": f"Sản phẩm '{raw_sku}' ({prod.name}) hiện đang ngừng kinh doanh.",
+                    "message": f"Sản phẩm '{prod.sku}' ({prod.name}) hiện đang ngừng kinh doanh.",
                 }, ensure_ascii=False)
 
             line_total = Decimal(str(qty)) * prod.unit_price

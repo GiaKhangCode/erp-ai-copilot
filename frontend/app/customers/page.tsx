@@ -16,8 +16,26 @@ import {
   UserCheck
 } from "lucide-react";
 import { fetchCustomers, CustomerItem } from "@/lib/api";
+import { PermissionGate, AccessDeniedView } from "@/components/permission-gate";
 
 export default function CustomersPage() {
+  return (
+    <PermissionGate
+      permission="customers:read"
+      fallback={
+        <AccessDeniedView
+          permission="customers:read"
+          title="Quản lý Khách hàng & Đối tác"
+          description="Tài khoản của bạn chưa được cấp quyền xem danh sách khách hàng & đối tác doanh nghiệp."
+        />
+      }
+    >
+      <CustomersContent />
+    </PermissionGate>
+  );
+}
+
+function CustomersContent() {
   const [customers, setCustomers] = useState<CustomerItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -31,7 +49,11 @@ export default function CustomersPage() {
       const data = await fetchCustomers();
       setCustomers(data);
     } catch (err: any) {
-      setErrorMsg("Lỗi khi tải danh sách khách hàng: " + err.message);
+      if (err.message?.includes("403")) {
+        setErrorMsg("Tài khoản của bạn không có quyền xem danh sách khách hàng (403 Forbidden). Vui lòng liên hệ Quản trị viên.");
+      } else {
+        setErrorMsg("Lỗi khi tải danh sách khách hàng: " + err.message);
+      }
     } finally {
       setLoading(false);
     }

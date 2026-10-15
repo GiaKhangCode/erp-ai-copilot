@@ -7,7 +7,7 @@ import { OrderIngestModal } from "@/components/order-ingest-modal";
 import { useToast } from "@/components/toast-provider";
 
 export function Header() {
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin, hasPermission } = useAuth();
   const toast = useToast();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
@@ -16,10 +16,14 @@ export function Header() {
     switch (role) {
       case "admin":
         return "Quản trị viên";
+      case "director":
+        return "Ban Giám đốc";
       case "sales_manager":
-        return "Quản lý bán hàng";
+        return "Quản lý kinh doanh";
       case "sales_rep":
         return "Chuyên viên kinh doanh";
+      case "warehouse_keeper":
+        return "Thủ kho";
       case "accountant":
         return "Kế toán viên";
       default:
@@ -27,8 +31,9 @@ export function Header() {
     }
   };
 
-  const displayName = user?.full_name || "Quản trị viên Demo";
+  const displayName = user?.full_name || "Quản trị viên";
   const displayRole = getRoleDisplayName(user?.role);
+  const showAdminLinks = isAdmin || hasPermission("users:read") || hasPermission("roles:manage");
 
   return (
     <header className="h-16 bg-white/95 backdrop-blur-sm border-b border-slate-200 px-6 lg:px-8 flex items-center justify-between sticky top-0 z-20 shrink-0">
@@ -107,6 +112,25 @@ export function Header() {
                   <span>{displayRole}</span>
                 </div>
               </div>
+
+              {showAdminLinks && (
+                <div className="py-1 border-b border-slate-100">
+                  <a
+                    href="/admin/users"
+                    className="block px-4 py-1.5 text-xs text-slate-700 hover:bg-slate-50 font-medium"
+                    onClick={() => setDropdownOpen(false)}
+                  >
+                    Quản lý nhân viên
+                  </a>
+                  <a
+                    href="/admin/roles"
+                    className="block px-4 py-1.5 text-xs text-slate-700 hover:bg-slate-50 font-medium"
+                    onClick={() => setDropdownOpen(false)}
+                  >
+                    Ma trận phân quyền
+                  </a>
+                </div>
+              )}
 
               <div className="py-1">
                 <button
