@@ -14,6 +14,9 @@ from app.ai.tools.erp_tools import (
     adjust_inventory,
     generate_sales_quotation,
     check_customer_credit,
+    get_sales_leaderboard,
+    get_financial_and_debt_report,
+    get_audit_logs,
 )
 from app.ai.tools.rag_tool import search_company_knowledge
 from app.ai.tools.context import (
@@ -35,6 +38,9 @@ ALL_AGENT_TOOLS: List[BaseTool] = [
     adjust_inventory,
     generate_sales_quotation,
     check_customer_credit,
+    get_sales_leaderboard,
+    get_financial_and_debt_report,
+    get_audit_logs,
     search_company_knowledge,
 ]
 
@@ -57,6 +63,10 @@ __all__ = [
     "propose_sales_order_draft",
     "deliver_sales_order",
     "adjust_inventory",
+    "generate_sales_quotation",
+    "check_customer_credit",
+    "get_sales_leaderboard",
+    "get_financial_and_debt_report",
     "search_company_knowledge",
     "UserContext",
     "get_current_user_context",

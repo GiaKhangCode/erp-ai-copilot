@@ -81,6 +81,7 @@ export default function HomePage() {
   const { user } = useAuth();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const isNavigatingRef = useRef(false);
 
   // Real KPI metrics state
   const [revenueData, setRevenueData] = useState<RevenueReportData | null>(
@@ -155,7 +156,8 @@ export default function HomePage() {
   };
 
   const handleSendMessage = () => {
-    if (!query.trim()) return;
+    if (!query.trim() || isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
     window.location.href = `/copilot?q=${encodeURIComponent(query.trim())}`;
   };
 

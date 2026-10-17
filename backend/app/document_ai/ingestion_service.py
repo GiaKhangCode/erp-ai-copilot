@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.core.errors import NotFoundException, ValidationException
 from app.document_ai.schemas import ExtractedPurchaseOrder, OrderIngestionResult, ResolvedOrderItem
 from app.document_ai.resolver import EntityResolver, EntityResolutionResult
-from app.erp.models import ApprovalRequest, AuditLog, Customer, Inventory, Product, SalesOrder, SalesOrderItem
+from app.erp.models import ApprovalRequest, AuditLog, Customer, Inventory, Product, SalesOrder, SalesOrderItem, User
 from app.erp.schemas import OrderDraftCreate, OrderItemDraft
 from app.erp.services.order import SalesOrderService
 
@@ -37,9 +37,39 @@ class OrderIngestionService:
         actor_id: uuid.UUID,
         source_type: str = "email_eml",
         source_identifier: str = "order.eml",
+        auto_create_customer: bool = False,
     ) -> OrderIngestionResult:
         # 1. Đối chiếu thực thể với DB
         resolution: EntityResolutionResult = await EntityResolver.resolve_order(session, extracted_order)
+
+        # Quick Customer Onboarding: Nếu khách hàng chưa có nhưng bật auto_create_customer và có tên/email
+        if not resolution.customer and auto_create_customer and (extracted_order.customer_name_candidate or extracted_order.sender_email):
+            new_code = (
+                extracted_order.customer_code_candidate.strip().upper()
+                if extracted_order.customer_code_candidate
+                else f"CUST-{uuid.uuid4().hex[:6].upper()}"
+            )
+            new_customer = Customer(
+                id=uuid.uuid4(),
+                code=new_code,
+                name=extracted_order.customer_name_candidate or "Khách hàng mới từ PO",
+                email=extracted_order.sender_email,
+                credit_limit=Decimal("50000000"),
+                current_debt=Decimal("0"),
+                status="active",
+            )
+            session.add(new_customer)
+            await session.flush()
+            resolution.customer = new_customer
+            resolution.warnings = [w for w in resolution.warnings if w.warning_type != "unmatched_customer"]
+            resolution.warnings.append(
+                OrderDiscrepancyWarning(
+                    warning_type="customer_auto_created",
+                    severity="info",
+                    message=f"Đã tự động khởi tạo nhanh hồ sơ khách hàng mới: {new_customer.name} (Mã: {new_customer.code}) từ PO.",
+                    field_affected="customer",
+                )
+            )
 
         # Nếu không có khách hàng hoặc không có bất kỳ mặt hàng nào khớp
         if not resolution.customer or not resolution.resolved_items:
@@ -61,18 +91,50 @@ class OrderIngestionService:
         # 2. Tạo đơn hàng nháp qua SalesOrderService
         draft_payload = OrderDraftCreate(
             customer_code=resolution.customer.code,
+            customer_po_number=extracted_order.po_number.strip() if extracted_order.po_number else None,
             items=[
-                OrderItemDraft(sku=item.sku, quantity=item.quantity)
+                OrderItemDraft(
+                    sku=item.sku,
+                    quantity=item.quantity,
+                    unit_price=item.doc_unit_price if item.doc_unit_price is not None else item.db_unit_price,
+                )
                 for item in resolution.resolved_items
             ],
             requested_delivery_date=str(extracted_order.requested_delivery_date) if extracted_order.requested_delivery_date else None,
         )
 
-        draft_order = await SalesOrderService.create_order_draft(
-            session=session,
-            payload=draft_payload,
-            actor_id=actor_id,
-        )
+        try:
+            draft_order = await SalesOrderService.create_order_draft(
+                session=session,
+                payload=draft_payload,
+                actor_id=actor_id,
+            )
+        except ValidationException as e:
+            # Nếu phát hiện trùng PO hoặc lỗi nghiệp vụ, chuyển thành warning trả về cho UI
+            from app.document_ai.schemas import OrderDiscrepancyWarning
+            resolution.warnings.append(
+                OrderDiscrepancyWarning(
+                    warning_type="duplicate_po" if "DUPLICATE_CUSTOMER_PO" in str(e) else "order_validation_error",
+                    severity="critical" if "DUPLICATE_CUSTOMER_PO" in str(e) else "warning",
+                    message=str(e),
+                    field_affected="po_number",
+                )
+            )
+            return OrderIngestionResult(
+                source_type=source_type,
+                source_identifier=source_identifier,
+                status="requires_human_correction",
+                extracted_data=extracted_order,
+                resolved_customer_id=resolution.customer.id if resolution.customer else None,
+                resolved_customer_code=resolution.customer.code if resolution.customer else None,
+                resolved_customer_name=resolution.customer.name if resolution.customer else None,
+                customer_po_number=extracted_order.po_number,
+                resolved_items=resolution.resolved_items,
+                total_amount=resolution.total_amount,
+                warnings=resolution.warnings,
+                draft_order_id=None,
+                approval_request_id=None,
+            )
 
         # 3. Tạo bản ghi phê duyệt trong erp.approval_requests
         approval_payload = {
@@ -198,11 +260,14 @@ class ApprovalService:
             )
 
         # Kiểm tra Nguyên tắc 4 mắt (Four-Eyes Principle / Segregation of Duties)
-        if req.requested_by == approver_id:
+        approver = await session.get(User, approver_id)
+        is_admin_override = bool(approver and (approver.is_superuser or approver.role == "admin"))
+
+        if req.requested_by == approver_id and not is_admin_override:
             raise ValidationException(
                 "Vi phạm nguyên tắc phân tách trách nhiệm (Four-Eyes Principle): "
                 "Người lập yêu cầu không được phép tự phê duyệt đơn hàng của chính mình. "
-                "Yêu cầu phải được một cấp quản lý khác xem xét và phê duyệt."
+                "Yêu cầu phải được một cấp quản lý khác xem xét và phê duyệt (hoặc tài khoản Quản trị viên hệ thống phê duyệt Override)."
             )
 
         # Lấy đơn hàng liên quan
@@ -221,18 +286,19 @@ class ApprovalService:
         req.approved_by = approver_id
         order.status = "confirmed"
 
-        # Tăng số lượng hàng giữ chỗ (reserved quantity) trong kho đầu tiên có sẵn
+        # Tăng số lượng hàng giữ chỗ (reserved quantity) cho số lượng hàng sẵn sàng (allocated_quantity)
         for item in order.items:
+            qty_to_reserve = item.allocated_quantity if item.allocated_quantity is not None else item.quantity
+            if qty_to_reserve <= 0:
+                continue
+
             inv_stmt = select(Inventory).where(Inventory.product_id == item.product_id).limit(1)
             inv_res = await session.execute(inv_stmt)
             inv = inv_res.scalar_one_or_none()
             if inv:
-                if inv.quantity_reserved + item.quantity > inv.quantity_on_hand:
-                    raise ValidationException(
-                        f"Không đủ tồn kho khả dụng để phê duyệt đơn hàng. "
-                        f"Tồn kho thực tế: {inv.quantity_on_hand}, đã giữ chỗ: {inv.quantity_reserved}, cần giữ thêm: {item.quantity}."
-                    )
-                inv.quantity_reserved += item.quantity
+                available_in_wh = max(0, inv.quantity_on_hand - inv.quantity_reserved)
+                reserve_now = min(qty_to_reserve, available_in_wh)
+                inv.quantity_reserved += reserve_now
 
         # Ghi Audit Log
         audit_log = AuditLog(

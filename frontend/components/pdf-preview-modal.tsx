@@ -22,7 +22,9 @@ export function PdfPreviewModal({
   filename: initialFilename,
 }: PdfPreviewModalProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [filename, setFilename] = useState<string>(initialFilename || "Bao_Gia.pdf");
+  const [filename, setFilename] = useState<string>(
+    initialFilename || (orderNumber ? `Phieu_Xac_Nhan_${orderNumber}.pdf` : "Phieu_Xac_Nhan_Don_Hang.pdf")
+  );
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -110,12 +112,12 @@ export function PdfPreviewModal({
                 <h3 className="text-sm font-bold text-slate-900 leading-tight">
                   {filename}
                 </h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                  PDF Báo giá
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                  Phiếu Xác Nhận Đơn Hàng
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                {orderNumber ? `Đơn hàng ${orderNumber}` : "Bản in Báo giá / Proforma Invoice chuẩn doanh nghiệp"}
+                {orderNumber ? `Đơn hàng ${orderNumber}` : "Bản in Xác Nhận Đơn Hàng / Proforma Invoice chuẩn doanh nghiệp"}
               </p>
             </div>
           </div>

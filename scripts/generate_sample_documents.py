@@ -3,16 +3,14 @@ Generate diverse real-world sample documents (DOCX, PDF) in data/sample_document
 for RAG ingestion and retrieval testing.
 """
 
-import os
 from pathlib import Path
 import docx
-from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "sample_documents"
@@ -67,7 +65,7 @@ def create_docx_sample():
         "Qua thoi han 07 ngay tren ma khong co ly do chinh dang, phong Ke toan se tu choi chi tra."
     )
 
-    doc.save(docx_path)
+    doc.save(str(docx_path))
     print(f"[+] Created DOCX sample: {docx_path}")
 
 

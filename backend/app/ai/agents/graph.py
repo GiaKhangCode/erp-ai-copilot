@@ -35,6 +35,8 @@ from app.ai.prompts.agent_prompts import (
     CHITCHAT_SYSTEM_PROMPT,
     CLARIFY_SYSTEM_PROMPT,
     SYNTHESIZER_SYSTEM_PROMPT,
+    get_role_aware_chitchat_prompt,
+    get_role_aware_super_agent_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,7 +101,12 @@ async def super_agent_node(state: ERPAgentState) -> Dict[str, Any]:
         user_permissions=state.get("user_permissions"),
     ))
 
-    system_msg = SystemMessage(content=SUPER_AGENT_SYSTEM_PROMPT)
+    super_prompt = get_role_aware_super_agent_prompt(
+        user_role=state.get("user_role"),
+        user_name=state.get("user_name"),
+        user_permissions=state.get("user_permissions"),
+    )
+    system_msg = SystemMessage(content=super_prompt)
     messages: List[BaseMessage] = [system_msg]
 
     history = state.get("messages", [])
@@ -185,6 +192,11 @@ async def super_tools_node(state: ERPAgentState) -> Dict[str, Any]:
         "propose_sales_order_draft": ("Đề xuất tạo đơn nháp (HITL)", "Khởi tạo bản nháp đơn hàng chờ phê duyệt"),
         "deliver_sales_order": ("Xuất kho đơn hàng", "Trừ tồn kho vật lý và hoàn tất giao hàng"),
         "adjust_inventory": ("Điều chỉnh tồn kho", "Lập phiếu kiểm kê và cập nhật số lượng tồn"),
+        "generate_sales_quotation": ("Xuất file PDF Báo giá", "Tạo file PDF báo giá chính thức gửi khách hàng"),
+        "check_customer_credit": ("Thẩm định hạn mức công nợ", "Kiểm tra dư nợ và rủi ro tín dụng"),
+        "get_sales_leaderboard": ("Bảng xếp hạng kinh doanh", "Vinh danh top nhân viên bán hàng xuất sắc"),
+        "get_financial_and_debt_report": ("Báo cáo lợi nhuận & tuổi nợ", "Phân tích biên lợi nhuận gộp và rủi ro nợ xấu"),
+        "get_audit_logs": ("Nhật ký kiểm toán hệ thống", "Truy vấn lịch sử thao tác & kiểm toán bảo mật"),
     }
 
     if messages:
@@ -196,7 +208,9 @@ async def super_tools_node(state: ERPAgentState) -> Dict[str, Any]:
             call_id = call.get("id") or f"call_{idx}_{name}"
             tool = tools_by_name.get(name)
 
-            title, desc = tool_label_map.get(name, (f"Thực thi {name}", f"Chạy công cụ {name}"))
+            fallback_title = f"Xử lý {name.replace('_', ' ')}"
+            fallback_desc = f"Thực hiện công cụ {name.replace('_', ' ')}"
+            title, desc = tool_label_map.get(name, (fallback_title, fallback_desc))
             arg_summary = ", ".join(f"{k}={v}" for k, v in args.items() if v is not None)[:60]
             detail = f"{desc} ({arg_summary})" if arg_summary else desc
 
@@ -599,11 +613,21 @@ async def draft_order_agent_node(state: ERPAgentState) -> Dict[str, Any]:
 
 
 async def chitchat_agent_node(state: ERPAgentState) -> Dict[str, Any]:
-    """Node xử lý chào hỏi xã giao và câu hỏi chung với fallback tự động"""
+    """Node xử lý chào hỏi xã giao và câu hỏi chung với fallback tự động, cá nhân hóa theo vai trò"""
     query = state.get("user_query", "")
+    user_role = state.get("user_role")
+    user_name = state.get("user_name")
+    user_permissions = state.get("user_permissions")
+
+    chitchat_prompt_text = get_role_aware_chitchat_prompt(
+        user_role=user_role,
+        user_name=user_name,
+        user_permissions=user_permissions,
+    )
+
     content = None
     prompt = [
-        SystemMessage(content=CHITCHAT_SYSTEM_PROMPT),
+        SystemMessage(content=chitchat_prompt_text),
         HumanMessage(content=query),
     ]
 
@@ -620,7 +644,17 @@ async def chitchat_agent_node(state: ERPAgentState) -> Dict[str, Any]:
             content = _extract_text(res.content)
         except Exception as e_fallback:
             logger.warning("Fallback LLM (%s) also failed in chitchat: %s", settings.GEMINI_FALLBACK_MODEL, e_fallback)
-            content = "Xin chào! Tôi là ERP AI Copilot. Tôi có thể hỗ trợ bạn tra cứu tồn kho, doanh thu, khách hàng, hỏi đáp tài liệu chính sách và lên đơn hàng nháp."
+            greeting_name = user_name or "bạn"
+            if user_role == "warehouse_keeper":
+                content = f"Xin chào {greeting_name}! Tôi là ERP AI Copilot, trợ lý đắc lực cho phân hệ Kho vận. Tôi có thể hỗ trợ bạn kiểm tra tồn kho thời gian thực, ra lệnh xuất kho cho đơn hàng đã duyệt và lập phiếu kiểm kê điều chỉnh kho."
+            elif user_role == "sales_rep":
+                content = f"Xin chào {greeting_name}! Tôi là ERP AI Copilot, trợ lý bán hàng của bạn. Tôi có thể hỗ trợ bạn lập đơn hàng nháp, xuất file PDF Báo giá kinh doanh, thẩm định hạn mức công nợ khách hàng và tra cứu tồn kho báo khách."
+            elif user_role == "sales_manager":
+                content = f"Xin chào {greeting_name}! Tôi là ERP AI Copilot hỗ trợ Quản lý kinh doanh. Tôi có thể hỗ trợ bạn theo dõi bảng xếp hạng Sales Leaderboard, báo cáo doanh thu bán hàng và phê duyệt đơn hàng nháp."
+            elif user_role == "director":
+                content = f"Kính chào {greeting_name}! Tôi là ERP AI Copilot hỗ trợ Ban Giám đốc. Tôi có thể cung cấp báo cáo phân tích Lợi nhuận gộp & Giá vốn COGS, phân tích rủi ro Tuổi nợ (Aging) và tổng quan hiệu suất kinh doanh."
+            else:
+                content = f"Xin chào {greeting_name}! Tôi là ERP AI Copilot — Trợ lý điều hành doanh nghiệp thông minh. Tôi sẵn sàng hỗ trợ bạn thực hiện các tác vụ ERP phù hợp với vai trò của bạn."
 
     return {
         "answer": content,

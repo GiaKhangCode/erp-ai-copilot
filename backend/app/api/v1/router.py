@@ -6,6 +6,8 @@ from app.api.v1.rag import router as rag_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.orders import router as orders_router
 from app.api.v1.admin import router as admin_router
+from app.api.v1.payments import router as payments_router
+from app.api.v1.purchasing import router as purchasing_router
 
 api_router = APIRouter()
 
@@ -35,5 +37,11 @@ api_router.include_router(chat_router)
 
 # Document AI & Approval Inbox endpoints
 api_router.include_router(orders_router)
+
+# Payments & AR Debt Collection endpoints
+api_router.include_router(payments_router)
+
+# Purchasing & Suppliers endpoints
+api_router.include_router(purchasing_router)
 
 

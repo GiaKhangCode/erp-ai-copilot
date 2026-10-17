@@ -12,12 +12,37 @@ import {
   ChevronUp,
   PackageCheck,
   Workflow,
+  Trophy,
+  ShieldCheck,
+  FileText,
+  Boxes,
 } from "lucide-react";
 import { ThoughtStep } from "@/lib/api";
 
 interface AiThoughtProcessProps {
   thoughtSteps?: ThoughtStep[];
   isStreaming?: boolean;
+}
+
+/**
+ * Loại bỏ các ký tự định dạng Markdown thô (###, **, *) và chuẩn hóa text hiển thị trong thought steps
+ */
+function cleanDetailText(detail?: string): string {
+  if (!detail) return "";
+  let cleaned = detail
+    .replace(/#{1,6}\s*/g, "") // bỏ markdown header ###
+    .replace(/\*\*(.*?)\*\*/g, "$1") // bỏ bold **text**
+    .replace(/\*(.*?)\*/g, "$1") // bỏ italic *text*
+    .replace(/`([^`]+)`/g, "$1") // bỏ code block
+    .replace(/[\r\n]+/g, " • ") // chuyển dòng mới thành dấu chấm phân tách
+    .replace(/\s{2,}/g, " ") // bỏ khoảng trắng thừa
+    .trim();
+
+  // Bỏ dấu gạch đầu dòng nếu có
+  if (cleaned.startsWith("• ")) {
+    cleaned = cleaned.substring(2);
+  }
+  return cleaned;
 }
 
 export function AiThoughtProcess({
@@ -34,63 +59,105 @@ export function AiThoughtProcess({
     isStreaming || thoughtSteps.some((s) => s.status === "running");
 
   const getStepIcon = (step: string) => {
-    if (step === "intent" || step === "super_agent") {
+    const s = step.toLowerCase();
+    if (s === "intent" || s === "super_agent") {
       return <Brain className="w-3.5 h-3.5 text-blue-600 shrink-0" />;
     }
-    if (step.includes("knowledge") || step === "rag") {
+    if (s.includes("knowledge") || s === "rag") {
       return <FileSearch className="w-3.5 h-3.5 text-violet-600 shrink-0" />;
     }
-    if (step.includes("draft") || step.includes("propose")) {
+    if (s.includes("leaderboard")) {
+      return <Trophy className="w-3.5 h-3.5 text-amber-500 shrink-0" />;
+    }
+    if (s.includes("credit") || s.includes("debt") || s.includes("financial")) {
+      return <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />;
+    }
+    if (s.includes("quotation") || s.includes("pdf")) {
+      return <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />;
+    }
+    if (s.includes("deliver") || s.includes("adjust")) {
+      return <Boxes className="w-3.5 h-3.5 text-indigo-600 shrink-0" />;
+    }
+    if (s.includes("draft") || s.includes("propose")) {
       return <PackageCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />;
     }
     if (
-      step.includes("inventory") ||
-      step.includes("product") ||
-      step.includes("customer") ||
-      step.includes("sales") ||
-      step.includes("revenue") ||
-      step === "db"
+      s.includes("inventory") ||
+      s.includes("product") ||
+      s.includes("customer") ||
+      s.includes("sales") ||
+      s.includes("revenue") ||
+      s === "db"
     ) {
       return <Database className="w-3.5 h-3.5 text-sky-600 shrink-0" />;
     }
-    if (step === "synthesis") {
+    if (s === "synthesis") {
       return <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />;
     }
     return <Workflow className="w-3.5 h-3.5 text-slate-500 shrink-0" />;
   };
 
   const getStepTag = (step: string) => {
-    if (step.includes("knowledge") || step === "rag") {
+    const s = step.toLowerCase();
+    if (s.includes("knowledge") || s === "rag") {
       return (
-        <span className="text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200/80 px-1.5 py-0.2 rounded-md">
+        <span className="text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200/80 px-1.5 py-0.5 rounded-md">
           Tài liệu nội bộ (RAG)
         </span>
       );
     }
-    if (step.includes("draft") || step.includes("propose")) {
+    if (s.includes("leaderboard")) {
       return (
-        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded-md">
+        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded-md">
+          Xếp hạng Sales
+        </span>
+      );
+    }
+    if (s.includes("credit") || s.includes("debt") || s.includes("financial")) {
+      return (
+        <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded-md">
+          Kiểm soát tài chính
+        </span>
+      );
+    }
+    if (s.includes("quotation") || s.includes("pdf")) {
+      return (
+        <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200/80 px-1.5 py-0.5 rounded-md">
+          Báo giá PDF
+        </span>
+      );
+    }
+    if (s.includes("deliver") || s.includes("adjust")) {
+      return (
+        <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-1.5 py-0.5 rounded-md">
+          Nghiệp vụ kho
+        </span>
+      );
+    }
+    if (s.includes("draft") || s.includes("propose")) {
+      return (
+        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded-md">
           Đề xuất HITL
         </span>
       );
     }
     if (
-      step.includes("inventory") ||
-      step.includes("product") ||
-      step.includes("customer") ||
-      step.includes("sales") ||
-      step.includes("revenue") ||
-      step === "db"
+      s.includes("inventory") ||
+      s.includes("product") ||
+      s.includes("customer") ||
+      s.includes("sales") ||
+      s.includes("revenue") ||
+      s === "db"
     ) {
       return (
-        <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/80 px-1.5 py-0.2 rounded-md">
+        <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/80 px-1.5 py-0.5 rounded-md">
           Cơ sở dữ liệu ERP
         </span>
       );
     }
-    if (step === "super_agent") {
+    if (s === "super_agent") {
       return (
-        <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/80 px-1.5 py-0.2 rounded-md">
+        <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/80 px-1.5 py-0.5 rounded-md">
           Điều phối ReAct
         </span>
       );
@@ -108,7 +175,11 @@ export function AiThoughtProcess({
       >
         <div className="flex items-center gap-2">
           <div
-            className={`w-5 h-5 rounded-md flex items-center justify-center ${isRunning ? "bg-blue-100 text-blue-600 animate-pulse" : "bg-slate-100 text-slate-600"}`}
+            className={`w-5 h-5 rounded-md flex items-center justify-center ${
+              isRunning
+                ? "bg-blue-100 text-blue-600 animate-pulse"
+                : "bg-slate-100 text-slate-600"
+            }`}
           >
             <Brain className="w-3.5 h-3.5" />
           </div>
@@ -146,6 +217,7 @@ export function AiThoughtProcess({
           {thoughtSteps.map((item, idx) => {
             const isLast = idx === thoughtSteps.length - 1;
             const isStepRunning = item.status === "running";
+            const cleanedDetail = cleanDetailText(item.detail);
 
             return (
               <div
@@ -175,9 +247,12 @@ export function AiThoughtProcess({
                     </span>
                     {getStepTag(item.step)}
                   </div>
-                  {item.detail && (
-                    <p className="text-[11.5px] text-slate-500 font-normal leading-relaxed">
-                      {item.detail}
+                  {cleanedDetail && (
+                    <p
+                      className="text-[11.5px] text-slate-500 font-normal leading-relaxed line-clamp-2"
+                      title={cleanedDetail}
+                    >
+                      {cleanedDetail}
                     </p>
                   )}
                 </div>

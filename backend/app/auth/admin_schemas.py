@@ -111,3 +111,33 @@ class UserAdminListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class AuditLogItemResponse(BaseModel):
+    id: str
+    actor_id: str
+    actor_email: Optional[str] = None
+    actor_role: Optional[str] = None
+    action: str
+    resource_type: str
+    resource_id: str
+    result: str
+    ip_address: Optional[str] = None
+    details: Optional[dict] = None
+    created_at: Optional[str] = None
+
+
+class AuditLogListResponse(BaseModel):
+    items: List[AuditLogItemResponse]
+    total: int
+    page: int
+    limit: int
+    total_pages: int
+
+
+class AuditLogStatsResponse(BaseModel):
+    total_logs: int
+    by_resource: List[dict]
+    by_action: List[dict]
+    top_users: List[dict]
+

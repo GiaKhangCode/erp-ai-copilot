@@ -12,6 +12,7 @@ from app.erp.services.product import ProductService
 from app.erp.services.customer import CustomerService
 from app.erp.services.order import SalesOrderService
 from app.erp.services.reporting import ReportingService
+from app.erp.services.audit import AuditService
 from app.core.errors import NotFoundException
 from app.ai.tools.context import get_current_user_context
 
@@ -799,4 +800,230 @@ async def check_customer_credit(
                 "success": False,
                 "message": f"Không thể tra cứu công nợ khách hàng: {str(e)}",
             }, ensure_ascii=False)
+
+
+# ==========================================
+# Phase 3: Executive Analytics AI Tools
+# ==========================================
+@tool
+async def get_sales_leaderboard(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+) -> str:
+    """
+    Báo cáo bảng xếp hạng hiệu suất kinh doanh (Sales Leaderboard) vinh danh Top Sales Reps (Phase 3).
+    Tổng hợp doanh thu chốt được, số đơn hàng và giá trị đơn trung bình (AOV) của từng nhân viên.
+    Chỉ dành cho Quản trị viên, Giám đốc, Quản lý bán hàng có quyền 'reports:revenue_view'.
+    """
+    user_ctx = get_current_user_context()
+    can_view = False
+    if user_ctx.user_permissions:
+        can_view = "*" in user_ctx.user_permissions or "reports:revenue_view" in user_ctx.user_permissions
+    elif user_ctx.user_role in ["admin", "sales_manager", "director"]:
+        can_view = True
+
+    if not can_view or user_ctx.user_role in ["warehouse_keeper", "sales_rep"]:
+        return json.dumps({
+            "error": "PERMISSION_DENIED",
+            "message": f"Truy cập bị từ chối: Báo cáo xếp hạng kinh doanh toàn công ty chỉ dành cho Quản trị viên, Giám đốc hoặc Quản lý bán hàng. Vai trò '{user_ctx.user_role}' không có quyền truy xuất dữ liệu này.",
+        }, ensure_ascii=False)
+
+    async with async_session_factory() as session:
+        try:
+            report = await ReportingService.get_sales_leaderboard(session=session, year=year, month=month)
+            formatted_items = []
+            for item in report.items:
+                badge = "🥇" if item.rank == 1 else ("🥈" if item.rank == 2 else ("🥉" if item.rank == 3 else f"#{item.rank}"))
+                rev_fmt = f"{int(item.total_revenue):,} đ".replace(",", ".")
+                aov_fmt = f"{int(item.aov):,} đ".replace(",", ".")
+                formatted_items.append(
+                    f"{badge} **Hạng {item.rank}: {item.sales_name}** ({item.sales_email})\n"
+                    f"   - Doanh thu chốt: **{rev_fmt}** | Số đơn: **{item.total_orders}** | Đơn trung bình (AOV): **{aov_fmt}**"
+                )
+
+            summary_text = (
+                f"### 🏆 BẢNG XẾP HẠNG HIỆU SUẤT KINH DOANH (SALES LEADERBOARD)\n"
+                f"- **Kỳ báo cáo:** {report.period}\n"
+                f"- **Tổng số nhân sự kinh doanh:** {report.total_sales_reps}\n\n"
+                + "\n\n".join(formatted_items)
+            )
+
+            return json.dumps({
+                "success": True,
+                "metric_id": report.metric_id,
+                "period": report.period,
+                "total_sales_reps": report.total_sales_reps,
+                "leaderboard": [
+                    {
+                        "rank": it.rank,
+                        "sales_name": it.sales_name,
+                        "sales_email": it.sales_email,
+                        "total_revenue": float(it.total_revenue),
+                        "total_orders": it.total_orders,
+                        "aov": float(it.aov),
+                    }
+                    for it in report.items
+                ],
+                "message": summary_text,
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({
+                "success": False,
+                "message": f"Không thể lấy bảng xếp hạng kinh doanh: {str(e)}",
+            }, ensure_ascii=False)
+
+
+@tool
+async def get_financial_and_debt_report(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+) -> str:
+    """
+    Báo cáo lợi nhuận gộp (Doanh thu - Giá vốn COGS) và phân tích rủi ro tuổi nợ công nợ khách hàng (Phase 3).
+    Chỉ dành cho Quản trị viên, Giám đốc, Quản lý bán hàng có quyền 'reports:revenue_view'.
+    """
+    user_ctx = get_current_user_context()
+    can_view = False
+    if user_ctx.user_permissions:
+        can_view = "*" in user_ctx.user_permissions or "reports:revenue_view" in user_ctx.user_permissions
+    elif user_ctx.user_role in ["admin", "sales_manager", "director"]:
+        can_view = True
+
+    if not can_view or user_ctx.user_role in ["warehouse_keeper", "sales_rep"]:
+        return json.dumps({
+            "error": "PERMISSION_DENIED",
+            "message": f"Truy cập bị từ chối: Báo cáo lợi nhuận gộp và công nợ rủi ro thuộc dữ liệu tài chính mật. Vai trò '{user_ctx.user_role}' không có quyền truy xuất.",
+        }, ensure_ascii=False)
+
+    async with async_session_factory() as session:
+        try:
+            profit_res = await ReportingService.get_financial_profitability(session=session, year=year, month=month)
+            debt_res = await ReportingService.get_debt_aging(session=session)
+
+            rev_fmt = f"{int(profit_res.total_revenue):,} đ".replace(",", ".")
+            cogs_fmt = f"{int(profit_res.total_cogs):,} đ".replace(",", ".")
+            gross_fmt = f"{int(profit_res.gross_profit):,} đ".replace(",", ".")
+            debt_fmt = f"{int(debt_res.total_debt):,} đ".replace(",", ".")
+
+            debt_buckets_text = []
+            for b in debt_res.buckets:
+                b_amt = f"{int(b.amount):,} đ".replace(",", ".")
+                debt_buckets_text.append(f"- **{b.label}:** **{b_amt}** ({b.customer_count} khách)")
+
+            summary_text = (
+                f"### 📈 BÁO CÁO TÀI CHÍNH & RỦI RO CÔNG NỢ DOANH NGHIỆP\n\n"
+                f"#### 1. Lợi nhuận gộp & Biên lợi nhuận (Kỳ: {profit_res.period})\n"
+                f"- **Doanh thu thuần:** **{rev_fmt}** (Tổng {profit_res.total_orders} đơn hàng)\n"
+                f"- **Tổng giá vốn hàng bán (COGS):** **{cogs_fmt}**\n"
+                f"- **Lợi nhuận gộp (Gross Profit):** **{gross_fmt}**\n"
+                f"- **Biên lợi nhuận gộp (Gross Margin):** **{profit_res.gross_margin_percent}%**\n\n"
+                f"#### 2. Phân tích Tuổi nợ & Quản trị Rủi ro (Accounts Receivable)\n"
+                f"- **Tổng dư nợ đang tồn đọng:** **{debt_fmt}**\n"
+                f"- **Tỷ lệ sử dụng hạn mức toàn hệ thống:** **{debt_res.overall_utilization_rate}%**\n"
+                f"- **Số khách hàng vượt hạn mức tín dụng:** **{debt_res.over_limit_customers_count}**\n"
+                + "\n".join(debt_buckets_text)
+            )
+
+            return json.dumps({
+                "success": True,
+                "profitability": {
+                    "period": profit_res.period,
+                    "total_revenue": float(profit_res.total_revenue),
+                    "total_cogs": float(profit_res.total_cogs),
+                    "gross_profit": float(profit_res.gross_profit),
+                    "gross_margin_percent": profit_res.gross_margin_percent,
+                    "total_orders": profit_res.total_orders,
+                },
+                "debt_aging": {
+                    "total_debt": float(debt_res.total_debt),
+                    "overall_utilization_rate": debt_res.overall_utilization_rate,
+                    "over_limit_customers_count": debt_res.over_limit_customers_count,
+                    "buckets": [
+                        {"bucket": b.bucket, "label": b.label, "amount": float(b.amount), "count": b.customer_count}
+                        for b in debt_res.buckets
+                    ],
+                },
+                "message": summary_text,
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({
+                "success": False,
+                "message": f"Không thể lấy báo cáo tài chính và công nợ: {str(e)}",
+            }, ensure_ascii=False)
+
+
+@tool
+async def get_audit_logs(
+    actor_email: Optional[str] = None,
+    action: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    limit: int = 10,
+) -> str:
+    """
+    Truy vấn nhật ký kiểm toán và lịch sử thao tác hệ thống (Audit Trail).
+    Dành riêng cho Quản trị viên (admin) và Ban Giám đốc (director) để truy vết:
+    ai đã làm gì, lúc nào, đối với đơn hàng/kho/tài khoản nào.
+
+    Args:
+        actor_email: Lọc theo email người thực hiện thao tác (Ví dụ: 'sales@erpcopilot.vn', 'admin@erpcopilot.vn').
+        action: Loại hành động (Ví dụ: 'AUTH_LOGIN', 'DELIVER_ORDER', 'STOCK_ADJUSTMENT', 'USER_CREATE', 'ROLE_PERMISSIONS_UPDATE').
+        resource_type: Loại tài nguyên tác động (Ví dụ: 'order', 'inventory', 'user', 'role', 'auth').
+        limit: Số lượng bản ghi nhật ký cần lấy (Mặc định 10).
+    """
+    ctx = get_current_user_context()
+    user_role = (ctx.user_role or "").lower()
+
+    # Chỉ Admin và Director có quyền truy cập nhật ký kiểm toán
+    if user_role not in ["admin", "director", "system_admin", "superadmin"]:
+        return json.dumps({
+            "success": False,
+            "message": "Từ chối truy cập: Chỉ Quản trị viên (admin) hoặc Ban Giám đốc (director) mới có quyền kiểm tra nhật ký kiểm toán hệ thống.",
+        }, ensure_ascii=False)
+
+    async with async_session_factory() as session:
+        try:
+            res = await AuditService.get_logs(
+                session=session,
+                page=1,
+                limit=min(limit, 30),
+                actor_email=actor_email,
+                action=action,
+                resource_type=resource_type,
+            )
+
+            items = res.get("items", [])
+            total = res.get("total", 0)
+
+            if not items:
+                return json.dumps({
+                    "success": True,
+                    "total": 0,
+                    "items": [],
+                    "message": "Không tìm thấy bản ghi nhật ký kiểm toán nào phù hợp với bộ lọc.",
+                }, ensure_ascii=False)
+
+            lines = [f"### 🛡️ NHẬT KÝ KIỂM TOÁN HỆ THỐNG (Tổng cộng: {total} bản ghi)\n"]
+            for idx, item in enumerate(items, 1):
+                created = item.get("created_at", "")[:19].replace("T", " ")
+                email = item.get("actor_email") or "Hệ thống"
+                role = item.get("actor_role") or "N/A"
+                act = item.get("action")
+                res_type = item.get("resource_type")
+                res_id = item.get("resource_id")
+                lines.append(f"{idx}. `[{created}]` **{email}** ({role}) ➔ Hành động: `{act}` trên `{res_type} #{res_id}`")
+
+            return json.dumps({
+                "success": True,
+                "total": total,
+                "items": items,
+                "message": "\n".join(lines),
+            }, ensure_ascii=False)
+        except Exception as e:
+            logger.error("Error fetching audit logs in tool: %s", e)
+            return json.dumps({
+                "success": False,
+                "message": f"Lỗi khi tra cứu nhật ký kiểm toán: {str(e)}",
+            }, ensure_ascii=False)
+
+
 

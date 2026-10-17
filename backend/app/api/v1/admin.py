@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth.admin_schemas import (
+    AuditLogListResponse,
+    AuditLogStatsResponse,
     PermissionGroupResponse,
     PermissionResponse,
     RoleBriefResponse,
@@ -23,10 +25,11 @@ from app.auth.admin_schemas import (
     UserResetPasswordRequest,
     UserStatusUpdate,
 )
-from app.auth.dependencies import get_current_user, require_permission
+from app.auth.dependencies import get_current_user, get_current_user_permissions, require_permission
 from app.auth.security import get_password_hash
 from app.db.session import get_db
 from app.erp.models import Permission, Role, RolePermission, User, UserRole, UserSession
+from app.erp.services.audit import AuditService
 
 router = APIRouter(prefix="/admin", tags=["Admin User & Role Management"])
 
@@ -226,6 +229,19 @@ async def create_user(
         )
         db.add(user_role_link)
 
+    await AuditService.log_activity(
+        session=db,
+        action="USER_CREATE",
+        resource_type="user",
+        resource_id=str(new_user.id),
+        actor=current_user,
+        details={
+            "email": new_user.email,
+            "full_name": new_user.full_name,
+            "role": new_user.role,
+            "roles": [r.code for r in selected_roles],
+        },
+    )
     await db.commit()
 
     # Nạp lại dữ liệu người dùng
@@ -528,6 +544,14 @@ async def reset_user_password(
         .values(is_revoked=True)
     )
 
+    await AuditService.log_activity(
+        session=db,
+        action="USER_PASSWORD_RESET",
+        resource_type="user",
+        resource_id=str(u.id),
+        actor=current_user,
+        details={"target_email": u.email},
+    )
     await db.commit()
     return {"message": f"Đã đặt lại mật khẩu thành công cho tài khoản '{u.email}'."}
 
@@ -860,6 +884,14 @@ async def update_role_permissions(
             )
         )
 
+    await AuditService.log_activity(
+        session=db,
+        action="ROLE_PERMISSIONS_UPDATE",
+        resource_type="role",
+        resource_id=str(role_id),
+        actor=current_user,
+        details={"role_code": r.code, "new_permission_count": len(payload.permission_ids)},
+    )
     await db.commit()
     db.expire_all()
 
@@ -982,3 +1014,79 @@ async def list_permissions(
         )
 
     return result
+
+
+# =========================================================================
+# 4. Audit Trail & Security Compliance Endpoints
+# =========================================================================
+
+@router.get(
+    "/audit-logs",
+    response_model=AuditLogListResponse,
+    summary="Truy vấn danh sách nhật ký kiểm toán hệ thống",
+)
+async def list_audit_logs(
+    page: int = Query(1, ge=1, description="Số trang hiện tại"),
+    limit: int = Query(20, ge=1, le=100, description="Số bản ghi mỗi trang"),
+    actor_email: Optional[str] = Query(None, description="Lọc theo email nhân sự thực hiện"),
+    action: Optional[str] = Query(None, description="Lọc theo loại hành động (vd: ORDER_APPROVE, LOGIN)"),
+    resource_type: Optional[str] = Query(None, description="Lọc theo phân hệ tài nguyên (vd: order, inventory, user, role)"),
+    from_date: Optional[datetime] = Query(None, description="Từ thời điểm (ISO 8601)"),
+    to_date: Optional[datetime] = Query(None, description="Đến thời điểm (ISO 8601)"),
+    current_user: User = Depends(get_current_user),
+    user_permissions: set[str] = Depends(get_current_user_permissions),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Truy vấn nhật ký kiểm toán toàn hệ thống.
+    Yêu cầu quyền 'audit:read', 'users:manage' hoặc vai trò Admin / Giám đốc.
+    """
+    if (
+        "*" not in user_permissions
+        and "audit:read" not in user_permissions
+        and "users:manage" not in user_permissions
+        and current_user.role not in ["admin", "director"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bạn không có quyền truy cập nhật ký kiểm toán hệ thống.",
+        )
+
+    res = await AuditService.get_logs(
+        session=db,
+        page=page,
+        limit=limit,
+        actor_email=actor_email,
+        action=action,
+        resource_type=resource_type,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    return res
+
+
+@router.get(
+    "/audit-logs/stats",
+    response_model=AuditLogStatsResponse,
+    summary="Thống kê tổng quan hoạt động kiểm toán",
+)
+async def get_audit_log_stats(
+    current_user: User = Depends(get_current_user),
+    user_permissions: set[str] = Depends(get_current_user_permissions),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lấy số liệu thống kê tổng quan các hoạt động kiểm toán để vẽ biểu đồ và tóm tắt."""
+    if (
+        "*" not in user_permissions
+        and "audit:read" not in user_permissions
+        and "users:manage" not in user_permissions
+        and current_user.role not in ["admin", "director"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bạn không có quyền truy cập thống kê kiểm toán.",
+        )
+
+    res = await AuditService.get_stats(session=db)
+    return res
+

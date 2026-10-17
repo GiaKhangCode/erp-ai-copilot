@@ -18,6 +18,7 @@ from app.auth.security import (
 from app.auth.dependencies import get_current_user, get_current_user_permissions
 from app.erp.models import User, UserSession, Permission, RolePermission, Role, UserRole
 from app.erp.schemas import LoginRequest, RefreshTokenRequest, TokenResponse, UserResponse
+from app.erp.services.audit import AuditService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -119,8 +120,17 @@ async def login(
     )
     db.add(session_record)
 
-    # Cập nhật thời điểm đăng nhập gần nhất
+    # Cập nhật thời điểm đăng nhập gần nhất & Ghi nhật ký kiểm toán AuditLog
     user.last_login_at = datetime.now(timezone.utc)
+    await AuditService.log_activity(
+        session=db,
+        action="AUTH_LOGIN",
+        resource_type="auth",
+        resource_id=str(user.id),
+        actor=user,
+        ip_address=client_ip,
+        details={"user_agent": user_agent, "roles": user_roles},
+    )
     await db.commit()
 
     user_resp = UserResponse(

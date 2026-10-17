@@ -72,12 +72,16 @@ export interface OrderItemDetail {
   product_name: string;
   quantity: number;
   unit_price: number;
+  catalog_price?: number;
+  allocated_quantity?: number;
+  backorder_quantity?: number;
   line_total: number;
 }
 
 export interface SalesOrderItem {
   id: string;
   order_number: string;
+  customer_po_number?: string;
   customer_id: string;
   customer_name?: string;
   customer_code?: string;
@@ -101,12 +105,25 @@ export interface StockAdjustmentItem {
 
 export interface OrderDraftCreatePayload {
   customer_code: string;
+  customer_po_number?: string;
   items: Array<{
     sku: string;
     quantity: number;
+    unit_price?: number;
   }>;
   requested_delivery_date?: string;
   source_document_id?: string;
+}
+
+export interface OrderDraftUpdatePayload {
+  customer_code?: string;
+  customer_po_number?: string;
+  items: Array<{
+    sku: string;
+    quantity: number;
+    unit_price?: number;
+  }>;
+  requested_delivery_date?: string;
 }
 
 export interface RevenueReportBreakdown {
@@ -121,6 +138,63 @@ export interface RevenueReportData {
   total_revenue: number;
   total_orders: number;
   breakdown: RevenueReportBreakdown[];
+}
+
+// ----------------------------------------------------
+// Phase 3: Executive Reporting Interfaces
+// ----------------------------------------------------
+export interface SalesLeaderboardItem {
+  sales_id: string;
+  sales_name: string;
+  sales_email: string;
+  total_revenue: number;
+  total_orders: number;
+  aov: number;
+  rank: number;
+}
+
+export interface SalesLeaderboardResponse {
+  metric_id: string;
+  period: string;
+  total_sales_reps: number;
+  items: SalesLeaderboardItem[];
+}
+
+export interface FinancialProfitabilityResponse {
+  metric_id: string;
+  period: string;
+  total_revenue: number;
+  total_cogs: number;
+  gross_profit: number;
+  gross_margin_percent: number;
+  total_orders: number;
+}
+
+export interface DebtAgingBucket {
+  bucket: string;
+  label: string;
+  amount: number;
+  customer_count: number;
+}
+
+export interface TopDebtorItem {
+  customer_id: string;
+  customer_code: string;
+  customer_name: string;
+  credit_limit: number;
+  current_debt: number;
+  credit_utilization_rate: number;
+  is_over_limit: boolean;
+}
+
+export interface DebtAgingReportResponse {
+  metric_id: string;
+  total_debt: number;
+  total_credit_limit: number;
+  overall_utilization_rate: number;
+  over_limit_customers_count: number;
+  buckets: DebtAgingBucket[];
+  top_debtors: TopDebtorItem[];
 }
 
 // ----------------------------------------------------
@@ -389,6 +463,32 @@ export async function fetchRevenueReport(
   return apiClient<RevenueReportData>(`/reporting/revenue${query}`);
 }
 
+export async function fetchSalesLeaderboardApi(
+  year?: number,
+  month?: number
+): Promise<SalesLeaderboardResponse> {
+  const params = new URLSearchParams();
+  if (year) params.append("year", year.toString());
+  if (month) params.append("month", month.toString());
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return apiClient<SalesLeaderboardResponse>(`/reporting/sales-leaderboard${query}`);
+}
+
+export async function fetchFinancialProfitabilityApi(
+  year?: number,
+  month?: number
+): Promise<FinancialProfitabilityResponse> {
+  const params = new URLSearchParams();
+  if (year) params.append("year", year.toString());
+  if (month) params.append("month", month.toString());
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return apiClient<FinancialProfitabilityResponse>(`/reporting/profitability${query}`);
+}
+
+export async function fetchDebtAgingApi(): Promise<DebtAgingReportResponse> {
+  return apiClient<DebtAgingReportResponse>("/reporting/debt-aging");
+}
+
 export async function fetchOrders(params?: {
   customer_code?: string;
   status?: string;
@@ -416,6 +516,24 @@ export async function createOrderDraftApi(
     method: "POST",
     headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {},
     body: JSON.stringify(payload),
+  });
+}
+
+export async function updateOrderDraftApi(
+  orderId: string,
+  payload: OrderDraftUpdatePayload
+): Promise<SalesOrderItem> {
+  return apiClient<SalesOrderItem>(`/sales-orders/${orderId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteOrderDraftApi(
+  orderId: string
+): Promise<{ message: string; order_id: string }> {
+  return apiClient<{ message: string; order_id: string }>(`/sales-orders/${orderId}`, {
+    method: "DELETE",
   });
 }
 
@@ -1009,10 +1127,370 @@ export async function fetchOrderQuotationBlobApi(orderId: string): Promise<{ blo
     const err = await res.json().catch(() => ({}));
     throw new Error(err.message || "Không thể tải file PDF báo giá.");
   }
-  const filename = res.headers.get("x-filename") || `Bao_Gia_${orderId}.pdf`;
+  const filename = res.headers.get("x-filename") || `Phieu_Xac_Nhan_${orderId}.pdf`;
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   return { blob, url, filename };
 }
+
+// ----------------------------------------------------
+// Audit Trail & Compliance Interfaces & APIs (Giai đoạn 4)
+// ----------------------------------------------------
+export interface AuditLogItem {
+  id: string;
+  actor_id: string;
+  actor_email: string;
+  actor_role: string;
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  result: string;
+  ip_address?: string | null;
+  details?: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLogItem[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
+export interface AuditLogStatsResponse {
+  total_logs: number;
+  by_resource: Array<{ resource_type: string; count: number }>;
+  by_action: Array<{ action: string; count: number }>;
+  top_users: Array<{ email: string; count: number }>;
+}
+
+export interface AuditLogFilterParams {
+  page?: number;
+  limit?: number;
+  actor_email?: string;
+  action?: string;
+  resource_type?: string;
+  from_date?: string;
+  to_date?: string;
+}
+
+export async function fetchAuditLogsApi(params?: AuditLogFilterParams): Promise<AuditLogListResponse> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", params.page.toString());
+  if (params?.limit) query.set("limit", params.limit.toString());
+  if (params?.actor_email) query.set("actor_email", params.actor_email);
+  if (params?.action) query.set("action", params.action);
+  if (params?.resource_type) query.set("resource_type", params.resource_type);
+  if (params?.from_date) query.set("from_date", params.from_date);
+  if (params?.to_date) query.set("to_date", params.to_date);
+
+  const qs = query.toString();
+  return apiClient<AuditLogListResponse>(`/admin/audit-logs${qs ? `?${qs}` : ""}`);
+}
+
+export async function fetchAuditLogStatsApi(): Promise<AuditLogStatsResponse> {
+  return apiClient<AuditLogStatsResponse>("/admin/audit-logs/stats");
+}
+
+// ----------------------------------------------------
+// Core ERP CRUD Interfaces & APIs (Customer, Product, Order)
+// ----------------------------------------------------
+
+export interface CustomerCreateInput {
+  code: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  credit_limit?: number;
+  status?: string;
+}
+
+export interface CustomerUpdateInput {
+  name?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  credit_limit?: number;
+  status?: string;
+}
+
+export async function createCustomerApi(data: CustomerCreateInput): Promise<CustomerItem> {
+  return apiClient<CustomerItem>("/customers", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateCustomerApi(customerId: string, data: CustomerUpdateInput): Promise<CustomerItem> {
+  return apiClient<CustomerItem>(`/customers/${customerId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteCustomerApi(customerId: string): Promise<CustomerItem> {
+  return apiClient<CustomerItem>(`/customers/${customerId}`, {
+    method: "DELETE",
+  });
+}
+
+export interface ProductCreateInput {
+  sku: string;
+  name: string;
+  unit_price: number;
+  cost_price?: number;
+  is_active?: boolean;
+}
+
+export interface ProductUpdateInput {
+  name?: string;
+  unit_price?: number;
+  cost_price?: number;
+  is_active?: boolean;
+}
+
+export async function createProductApi(data: ProductCreateInput): Promise<ProductItem> {
+  return apiClient<ProductItem>("/products", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateProductApi(productId: string, data: ProductUpdateInput): Promise<ProductItem> {
+  return apiClient<ProductItem>(`/products/${productId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteProductApi(productId: string): Promise<ProductItem> {
+  return apiClient<ProductItem>(`/products/${productId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function cancelSalesOrderApi(orderId: string, reason?: string): Promise<SalesOrderItem> {
+  return apiClient<SalesOrderItem>(`/orders/${orderId}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason || "Người dùng yêu cầu hủy đơn" }),
+  });
+}
+
+// ----------------------------------------------------
+// Payments & AR Debt Collection API
+// ----------------------------------------------------
+export interface PaymentItem {
+  id: string;
+  payment_number: string;
+  customer_id: string;
+  customer_name?: string | null;
+  customer_code?: string | null;
+  order_id?: string | null;
+  order_number?: string | null;
+  amount: number;
+  payment_method: string;
+  reference_code?: string | null;
+  note?: string | null;
+  received_by: string;
+  receiver_name?: string | null;
+  created_at: string;
+}
+
+export interface PaymentCreateInput {
+  customer_id: string;
+  order_id?: string;
+  amount: number;
+  payment_method?: string;
+  reference_code?: string;
+  note?: string;
+}
+
+export async function createPaymentApi(data: PaymentCreateInput): Promise<PaymentItem> {
+  return apiClient<PaymentItem>("/payments", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchPaymentsApi(params?: {
+  customer_id?: string;
+  order_id?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<PaymentItem[]> {
+  const query = new URLSearchParams();
+  if (params?.customer_id) query.append("customer_id", params.customer_id);
+  if (params?.order_id) query.append("order_id", params.order_id);
+  if (params?.limit) query.append("limit", params.limit.toString());
+  if (params?.offset) query.append("offset", params.offset.toString());
+
+  const qs = query.toString();
+  return apiClient<PaymentItem[]>(`/payments${qs ? `?${qs}` : ""}`);
+}
+
+// ----------------------------------------------------
+// Stock Transfer API (Điều chuyển kho nội bộ)
+// ----------------------------------------------------
+export interface StockTransferItem {
+  id: string;
+  transfer_number: string;
+  sku: string;
+  product_name: string;
+  source_warehouse_code: string;
+  source_warehouse_name: string;
+  target_warehouse_code: string;
+  target_warehouse_name: string;
+  quantity: number;
+  reason: string;
+  transferred_by: string;
+  transferrer_name?: string | null;
+  created_at: string;
+}
+
+export interface StockTransferCreateInput {
+  source_warehouse_code: string;
+  target_warehouse_code: string;
+  sku: string;
+  quantity: number;
+  reason: string;
+}
+
+export async function transferInventoryApi(data: StockTransferCreateInput): Promise<StockTransferItem> {
+  return apiClient<StockTransferItem>("/inventory/transfers", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchStockTransfersApi(params?: {
+  sku?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<StockTransferItem[]> {
+  const query = new URLSearchParams();
+  if (params?.sku) query.append("sku", params.sku);
+  if (params?.limit) query.append("limit", params.limit.toString());
+  if (params?.offset) query.append("offset", params.offset.toString());
+
+  const qs = query.toString();
+  return apiClient<StockTransferItem[]>(`/inventory/transfers${qs ? `?${qs}` : ""}`);
+}
+
+// ----------------------------------------------------
+// Purchasing & Supplier APIs (Phase 6)
+// ----------------------------------------------------
+export interface SupplierItem {
+  id: string;
+  code: string;
+  name: string;
+  tax_code?: string | null;
+  contact_email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  status: "active" | "inactive" | string;
+  created_at: string;
+}
+
+export interface PurchaseOrderItemDetail {
+  id: string;
+  product_id: string;
+  sku: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  po_number: string;
+  supplier_id: string;
+  supplier_code: string;
+  supplier_name: string;
+  warehouse_id: string;
+  warehouse_code: string;
+  warehouse_name: string;
+  status: "draft" | "ordered" | "received" | "cancelled" | string;
+  total_amount: number;
+  notes?: string | null;
+  created_by: string;
+  creator_name?: string | null;
+  created_at: string;
+  items: PurchaseOrderItemDetail[];
+}
+
+export async function fetchSuppliers(params?: {
+  status?: string;
+  limit?: number;
+}): Promise<SupplierItem[]> {
+  const q = new URLSearchParams();
+  if (params?.status) q.append("status", params.status);
+  if (params?.limit) q.append("limit", params.limit.toString());
+  const queryString = q.toString() ? `?${q.toString()}` : "";
+  return apiClient<SupplierItem[]>(`/purchasing/suppliers${queryString}`);
+}
+
+export async function createSupplierApi(payload: {
+  code: string;
+  name: string;
+  tax_code?: string;
+  contact_email?: string;
+  phone?: string;
+  address?: string;
+}): Promise<SupplierItem> {
+  return apiClient<SupplierItem>("/purchasing/suppliers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPurchaseOrders(params?: {
+  status?: string;
+  supplier_code?: string;
+  warehouse_code?: string;
+  limit?: number;
+}): Promise<PurchaseOrderItem[]> {
+  const q = new URLSearchParams();
+  if (params?.status) q.append("status", params.status);
+  if (params?.supplier_code) q.append("supplier_code", params.supplier_code);
+  if (params?.warehouse_code) q.append("warehouse_code", params.warehouse_code);
+  if (params?.limit) q.append("limit", params.limit.toString());
+  const queryString = q.toString() ? `?${q.toString()}` : "";
+  return apiClient<PurchaseOrderItem[]>(`/purchasing/orders${queryString}`);
+}
+
+export async function fetchPurchaseOrderDetail(poId: string): Promise<PurchaseOrderItem> {
+  return apiClient<PurchaseOrderItem>(`/purchasing/orders/${poId}`);
+}
+
+export async function createPurchaseOrderApi(payload: {
+  supplier_code: string;
+  warehouse_code: string;
+  items: Array<{ sku: string; quantity: number; unit_price: number }>;
+  notes?: string;
+}): Promise<PurchaseOrderItem> {
+  return apiClient<PurchaseOrderItem>("/purchasing/orders", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function receivePurchaseOrderApi(poId: string): Promise<PurchaseOrderItem> {
+  return apiClient<PurchaseOrderItem>(`/purchasing/orders/${poId}/receive`, {
+    method: "POST",
+  });
+}
+
+export async function cancelPurchaseOrderApi(poId: string, reason?: string): Promise<PurchaseOrderItem> {
+  return apiClient<PurchaseOrderItem>(`/purchasing/orders/${poId}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason || "Hủy đơn mua hàng" }),
+  });
+}
+
+
+
 
 

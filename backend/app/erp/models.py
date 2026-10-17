@@ -163,6 +163,7 @@ class Product(Base):
     __tablename__ = "products"
     __table_args__ = (
         CheckConstraint("unit_price >= 0", name="check_product_unit_price"),
+        CheckConstraint("cost_price >= 0", name="check_product_cost_price"),
         {"schema": "erp"},
     )
 
@@ -170,6 +171,7 @@ class Product(Base):
     sku: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    cost_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     inventory_items: Mapped[List["Inventory"]] = relationship("Inventory", back_populates="product")
@@ -226,6 +228,7 @@ class SalesOrder(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_number: Mapped[str] = mapped_column(Text, unique=True, nullable=False, index=True)
+    customer_po_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     customer_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("erp.customers.id"), nullable=False
     )
@@ -268,6 +271,9 @@ class SalesOrderItem(Base):
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    catalog_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
+    allocated_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    backorder_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     line_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
 
     order: Mapped["SalesOrder"] = relationship("SalesOrder", back_populates="items")
@@ -312,10 +318,14 @@ class AuditLog(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     actor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    actor_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    actor_role: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     action: Mapped[str] = mapped_column(Text, nullable=False)
     resource_type: Mapped[str] = mapped_column(Text, nullable=False)
     resource_id: Mapped[str] = mapped_column(Text, nullable=False)
     result: Mapped[str] = mapped_column(Text, nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    details: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -364,3 +374,150 @@ class StockAdjustment(Base):
     product: Mapped["Product"] = relationship("Product")
     warehouse: Mapped["Warehouse"] = relationship("Warehouse")
     adjuster: Mapped["User"] = relationship("User")
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="check_payment_amount_positive"),
+        {"schema": "erp"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    payment_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.customers.id"), nullable=False, index=True
+    )
+    order_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.sales_orders.id"), nullable=True, index=True
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(30), default="bank_transfer", nullable=False)
+    reference_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    received_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    customer: Mapped["Customer"] = relationship("Customer")
+    order: Mapped[Optional["SalesOrder"]] = relationship("SalesOrder")
+    receiver: Mapped["User"] = relationship("User")
+
+
+class StockTransfer(Base):
+    __tablename__ = "stock_transfers"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="check_transfer_quantity_positive"),
+        {"schema": "erp"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    transfer_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    source_warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.warehouses.id"), nullable=False, index=True
+    )
+    target_warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.warehouses.id"), nullable=False, index=True
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.products.id"), nullable=False, index=True
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    transferred_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    source_warehouse: Mapped["Warehouse"] = relationship("Warehouse", foreign_keys=[source_warehouse_id])
+    target_warehouse: Mapped["Warehouse"] = relationship("Warehouse", foreign_keys=[target_warehouse_id])
+    product: Mapped["Product"] = relationship("Product")
+    transferrer: Mapped["User"] = relationship("User")
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'inactive')", name="check_supplier_status"),
+        {"schema": "erp"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    tax_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    purchase_orders: Mapped[List["PurchaseOrder"]] = relationship("PurchaseOrder", back_populates="supplier")
+
+
+class PurchaseOrder(Base):
+    __tablename__ = "purchase_orders"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'ordered', 'received', 'cancelled')",
+            name="check_purchase_order_status",
+        ),
+        CheckConstraint("total_amount >= 0", name="check_po_total_amount"),
+        {"schema": "erp"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    po_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    supplier_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.suppliers.id"), nullable=False, index=True
+    )
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.warehouses.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False, index=True)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0.00"), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    supplier: Mapped["Supplier"] = relationship("Supplier", back_populates="purchase_orders")
+    warehouse: Mapped["Warehouse"] = relationship("Warehouse")
+    creator: Mapped["User"] = relationship("User")
+    items: Mapped[List["PurchaseOrderItem"]] = relationship(
+        "PurchaseOrderItem", back_populates="purchase_order", cascade="all, delete-orphan"
+    )
+
+
+class PurchaseOrderItem(Base):
+    __tablename__ = "purchase_order_items"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="check_po_item_quantity"),
+        CheckConstraint("unit_price >= 0", name="check_po_item_unit_price"),
+        CheckConstraint("line_total >= 0", name="check_po_item_line_total"),
+        {"schema": "erp"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    po_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.purchase_orders.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("erp.products.id"), nullable=False, index=True
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    line_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+
+    purchase_order: Mapped["PurchaseOrder"] = relationship("PurchaseOrder", back_populates="items")
+    product: Mapped["Product"] = relationship("Product")

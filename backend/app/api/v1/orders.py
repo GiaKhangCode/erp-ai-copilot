@@ -21,7 +21,7 @@ from app.erp.models import ApprovalRequest, User
 from app.erp.services.order import SalesOrderService
 from app.erp.services.quotation import QuotationService
 from app.erp.services.customer import CustomerService
-from app.erp.schemas import OrderResponse, CustomerCreditCheckResponse
+from app.erp.schemas import OrderResponse, CustomerCreditCheckResponse, OrderCancelRequest
 from app.rag.parser import parse_document
 
 router = APIRouter(tags=["Document AI & Approval Inbox"])
@@ -338,13 +338,19 @@ async def export_order_quotation_pdf(
     order = await SalesOrderService.get_order_by_id(db, order_id)
     pdf_bytes = await QuotationService.generate_pdf(db, order_id)
 
-    filename = f"Bao_Gia_{order.order_number}.pdf"
+    is_order_confirmation = order.status in ("confirmed", "delivered") or bool(order.customer_po_number)
+    filename = (
+        f"Phieu_Xac_Nhan_{order.order_number}.pdf"
+        if is_order_confirmation
+        else f"Bao_Gia_{order.order_number}.pdf"
+    )
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'inline; filename="{filename}"',
             "X-Filename": filename,
+            "Access-Control-Expose-Headers": "X-Filename, Content-Disposition",
         },
     )
 
@@ -418,5 +424,34 @@ async def check_customer_credit_limit(
         is_exceeded=result["is_exceeded"],
         currency="VND",
     )
+
+
+@router.post(
+    "/orders/{order_id}/cancel",
+    response_model=OrderResponse,
+    summary="Hủy đơn hàng bán và hoàn trả số lượng dự lưu (reserved) về kho",
+)
+async def cancel_sales_order(
+    order_id: uuid.UUID,
+    payload: Optional[OrderCancelRequest] = None,
+    current_user: User = Depends(require_permission("orders:cancel")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Hủy đơn hàng:
+    - Yêu cầu quyền 'orders:cancel'.
+    - Hoàn trả số lượng đang giữ (quantity_reserved) của đơn hàng về kho khả dụng.
+    - Chuyển trạng thái đơn sang 'cancelled'.
+    - Ghi nhận vào nhật ký kiểm toán AuditLog.
+    """
+    reason = payload.reason if payload else "Hủy đơn hàng theo yêu cầu"
+    order = await SalesOrderService.cancel_order(
+        session=db,
+        order_id=order_id,
+        actor_id=current_user.id,
+        reason=reason,
+    )
+    return order
+
 
 

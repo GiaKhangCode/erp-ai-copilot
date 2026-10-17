@@ -17,7 +17,8 @@ import {
   UserCheck, 
   Settings,
   ShieldCheck,
-  Shield
+  Shield,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
@@ -36,6 +37,7 @@ const mainNavItems: NavItem[] = [
   { label: "Khách hàng", href: "/customers", icon: Users, permission: "customers:read" },
   { label: "Sản phẩm", href: "/products", icon: Package, permission: "products:read" },
   { label: "Đơn hàng", href: "/orders", icon: ShoppingCart, permission: "orders:read" },
+  { label: "Mua hàng (PO)", href: "/purchasing", icon: ShoppingBag, permission: "purchasing:read" },
   { label: "Tồn kho", href: "/inventory", icon: Warehouse, permission: "inventory:read" },
   { label: "Báo cáo", href: "/reports", icon: BarChart2, permission: "reports:revenue_view" },
   { label: "Tài liệu", href: "/documents", icon: FileText, permission: "documents:read" },
@@ -45,10 +47,10 @@ const mainNavItems: NavItem[] = [
 const adminNavItems: NavItem[] = [
   { label: "Quản lý nhân viên", href: "/admin/users", icon: Users, permission: "users:read" },
   { label: "Ma trận phân quyền", href: "/admin/roles", icon: ShieldCheck, permission: "roles:manage" },
+  { label: "Nhật ký kiểm toán", href: "/admin/audit-logs", icon: History, permission: "audit:read" },
 ];
 
 const secondaryNavItems: NavItem[] = [
-  { label: "Mua hàng", href: "/purchasing", icon: ShoppingBag },
   { label: "Kế toán", href: "/accounting", icon: Calculator },
   { label: "Nhân sự", href: "/hr", icon: UserCheck },
   { label: "Cài đặt", href: "/settings", icon: Settings },
@@ -63,7 +65,7 @@ export function Sidebar() {
     return isAdmin || hasPermission(item.permission);
   });
 
-  const showAdminSection = isAdmin || hasPermission("users:read") || hasPermission("roles:manage");
+  const showAdminSection = isAdmin || hasPermission("users:read") || hasPermission("roles:manage") || hasPermission("audit:read");
   const filteredAdminItems = adminNavItems.filter((item) => {
     if (!item.permission) return true;
     return isAdmin || hasPermission(item.permission);

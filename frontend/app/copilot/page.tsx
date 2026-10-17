@@ -232,7 +232,8 @@ function CopilotDashboardWorkspace() {
     type: "success" | "error";
     msg: string;
   } | null>(null);
-  const [initialProcessed, setInitialProcessed] = useState(false);
+  const processedQueryRef = useRef<string | null>(null);
+  const isSendingRef = useRef<boolean>(false);
 
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
   const [isRagUploadModalOpen, setIsRagUploadModalOpen] = useState(false);
@@ -459,10 +460,17 @@ function CopilotDashboardWorkspace() {
     loadSidebarData();
   }, []);
 
-  // Process initial query if passed via URL (?q=...)
+  // Process initial query if passed via URL (?q=...) - Đảm bảo chỉ gửi 1 lần duy nhất
   useEffect(() => {
-    if (initialQuery && !initialProcessed) {
-      setInitialProcessed(true);
+    if (initialQuery && processedQueryRef.current !== initialQuery) {
+      processedQueryRef.current = initialQuery;
+      if (typeof window !== "undefined") {
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("q");
+          window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
+        } catch {}
+      }
       handleSendMessage(initialQuery);
     }
   }, [initialQuery]);
@@ -558,7 +566,8 @@ function CopilotDashboardWorkspace() {
 
   const handleSendMessage = async (queryText?: string) => {
     const text = (queryText || inputQuery).trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || isSendingRef.current) return;
+    isSendingRef.current = true;
 
     setInputQuery("");
     if (textareaRef.current) {
@@ -696,6 +705,7 @@ function CopilotDashboardWorkspace() {
     } finally {
       setIsLoading(false);
       setStreamingStatus(null);
+      isSendingRef.current = false;
     }
   };
 

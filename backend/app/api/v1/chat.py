@@ -395,11 +395,18 @@ async def chat_with_agent_stream(
                 "get_inventory": ("Kiểm tra tồn kho", "Đang kiểm tra số lượng tồn kho khả dụng..."),
                 "get_product": ("Tra cứu thông tin sản phẩm", "Đang lấy thông số và đơn giá niêm yết..."),
                 "list_products": ("Tìm kiếm danh mục sản phẩm", "Đang tra cứu danh mục mặt hàng..."),
-                "get_customer": ("Xác minh khách hàng", "Đang kiểm tra thông tin khách hàng..."),
+                "get_customer": ("Xác minh khách hàng", "Đang kiểm tra thông tin đối tác..."),
                 "list_customers": ("Tìm kiếm khách hàng", "Đang tìm kiếm đối tác trong hệ thống..."),
                 "get_sales_orders": ("Tra cứu đơn hàng bán", "Đang tải lịch sử giao dịch đơn hàng..."),
                 "get_revenue_report": ("Báo cáo doanh thu tài chính", "Đang trích xuất số liệu doanh thu..."),
                 "propose_sales_order_draft": ("Đề xuất tạo đơn nháp (HITL)", "Đang lập đơn hàng nháp và kiểm tra tồn kho..."),
+                "deliver_sales_order": ("Xuất kho đơn hàng", "Đang xử lý trừ kho và giao hàng..."),
+                "adjust_inventory": ("Kiểm kê & Điều chỉnh kho", "Đang ghi nhận phiếu kiểm kê tồn kho..."),
+                "generate_sales_quotation": ("Xuất file PDF Báo giá", "Đang khởi tạo tệp báo giá PDF kèm QR..."),
+                "check_customer_credit": ("Thẩm định hạn mức công nợ", "Đang kiểm tra dư nợ tín dụng khách hàng..."),
+                "get_sales_leaderboard": ("Bảng xếp hạng kinh doanh", "Đang phân tích doanh số và xếp hạng đội ngũ sales..."),
+                "get_financial_and_debt_report": ("Báo cáo lợi nhuận & tuổi nợ", "Đang phân tích biên lợi nhuận và tuổi nợ..."),
+                "get_audit_logs": ("Nhật ký kiểm toán hệ thống", "Đang truy xuất lịch sử thao tác & kiểm toán..."),
             }
 
             while iteration < max_iterations and not agent_answered:
@@ -433,8 +440,11 @@ async def chat_with_agent_stream(
                         step_id = f"tool_{iteration}_{idx}_{t_name}"
                         tool = tools_by_name.get(t_name)
 
-                        meta_title, meta_running = tool_meta.get(t_name, (f"Thực thi {t_name}", f"Đang thực thi {t_name}..."))
-                        arg_summary = ", ".join(f"{k}={v}" for k, v in t_args.items() if v is not None)[:60]
+                        # Tên công cụ thân thiện, tránh hiển thị tên hàm kỹ thuật
+                        fallback_title = f"Xử lý {t_name.replace('_', ' ')}"
+                        fallback_running = f"Đang thực hiện {t_name.replace('_', ' ')}..."
+                        meta_title, meta_running = tool_meta.get(t_name, (fallback_title, fallback_running))
+                        arg_summary = ", ".join(f"{k}={v}" for k, v in t_args.items() if v is not None)[:50]
                         running_detail = f"{meta_running} ({arg_summary})" if arg_summary else meta_running
 
                         # Stream event: tool is running
@@ -448,7 +458,7 @@ async def chat_with_agent_stream(
                                 res_str = str(res)
                                 messages.append(ToolMessage(content=res_str, tool_call_id=call_id, name=t_name))
 
-                                completed_detail = "Đã thực thi thành công"
+                                completed_detail = "Đã hoàn thành tác vụ"
                                 try:
                                     parsed = json.loads(res_str)
                                     if isinstance(parsed, dict):
@@ -464,12 +474,12 @@ async def chat_with_agent_stream(
                                             proposed_action = parsed
                                             order_num = parsed.get("order_number") or parsed.get("draft_payload", {}).get("order_number") or ""
                                             cust_name = parsed.get("customer_name") or parsed.get("draft_payload", {}).get("customer_name") or ""
-                                            completed_detail = f"Đã tạo đơn nháp #{order_num} cho {cust_name} (chờ phê duyệt)"
+                                            completed_detail = f"Đã lập bản nháp đơn hàng #{order_num} cho {cust_name} (chờ duyệt)"
                                         elif t_name == "get_inventory":
                                             avail = parsed.get("total_available") or parsed.get("available_quantity") or 0
                                             items_list = parsed.get("items", [])
                                             pname = parsed.get("product_name") or (items_list[0].get("product_name") if items_list else "")
-                                            completed_detail = f"Tồn kho khả dụng: {avail} cái{f' ({pname})' if pname else ''}" if parsed.get("found") else "Đã kiểm tra dữ liệu tồn kho"
+                                            completed_detail = f"Tồn kho khả dụng: {avail} sản phẩm{f' ({pname})' if pname else ''}" if parsed.get("found") else "Đã kiểm tra dữ liệu tồn kho"
                                         elif t_name == "get_product":
                                             pname = parsed.get("product", {}).get("name", "")
                                             pprice = parsed.get("product", {}).get("formatted_price", "")
@@ -490,8 +500,31 @@ async def chat_with_agent_stream(
                                         elif t_name == "get_sales_orders":
                                             count = len(parsed.get("orders", []))
                                             completed_detail = f"Đã trích xuất {count} đơn hàng bán"
+                                        elif t_name == "get_sales_leaderboard":
+                                            total_sales = len(parsed.get("leaderboard", [])) if isinstance(parsed.get("leaderboard"), list) else 0
+                                            completed_detail = f"Đã xếp hạng hiệu suất cho {total_sales} nhân viên kinh doanh" if total_sales else "Đã tổng hợp bảng xếp hạng doanh số"
+                                        elif t_name == "get_financial_and_debt_report":
+                                            rev = parsed.get("summary", {}).get("formatted_total_revenue", "")
+                                            completed_detail = f"Đã phân tích lợi nhuận & tuổi nợ{f' (Doanh thu: {rev})' if rev else ''}"
+                                        elif t_name == "check_customer_credit":
+                                            cname = parsed.get("customer_name", "khách hàng")
+                                            is_ok = parsed.get("allow_new_order", False)
+                                            completed_detail = f"Thẩm định công nợ: {'Đủ điều kiện tín dụng' if is_ok else 'Cảnh báo vượt hạn mức'} ({cname})"
+                                        elif t_name == "generate_sales_quotation":
+                                            fname = parsed.get("file_name", "Bao_gia.pdf")
+                                            completed_detail = f"Đã xuất thành công tệp PDF báo giá ({fname})" if parsed.get("success") else "Đã hoàn thành tạo báo giá"
+                                        elif t_name == "deliver_sales_order":
+                                            completed_detail = f"Đã xuất kho thành công đơn hàng #{parsed.get('order_number', '')}" if parsed.get("success") else "Đã hoàn tất xuất kho"
+                                        elif t_name == "adjust_inventory":
+                                            completed_detail = f"Đã cập nhật kiểm kê (Tồn mới: {parsed.get('new_quantity', '')})" if parsed.get("success") else "Đã ghi nhận điều chỉnh kho"
+                                        elif t_name == "get_audit_logs":
+                                            tot_logs = parsed.get("total", 0)
+                                            completed_detail = f"Đã trích xuất {tot_logs} bản ghi kiểm toán gần nhất" if parsed.get("success") else "Đã tra cứu nhật ký kiểm toán"
                                         else:
-                                            completed_detail = parsed.get("message", "Đã thực thi thành công")
+                                            # Rút gọn message thô, loại bỏ các ký tự Markdown tiêu đề để giữ dòng suy nghĩ tinh tế
+                                            raw_msg = str(parsed.get("message") or "Đã thực thi thành công")
+                                            first_line = raw_msg.split("\n")[0].replace("#", "").replace("*", "").strip()
+                                            completed_detail = (first_line[:80] + "...") if len(first_line) > 80 else first_line
                                     else:
                                         tool_results.append({"name": t_name, "result": parsed})
                                 except Exception:

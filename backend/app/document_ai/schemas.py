@@ -54,6 +54,10 @@ class ExtractedPurchaseOrder(BaseModel):
         None,
         description="Địa chỉ giao nhận hàng hóa yêu cầu",
     )
+    po_number: Optional[str] = Field(
+        None,
+        description="Số đơn đặt hàng PO của khách hàng (VD: PO-2026-10-099)",
+    )
     requested_delivery_date: Optional[date] = Field(
         None,
         description="Ngày yêu cầu giao hàng mong muốn (YYYY-MM-DD)",
@@ -138,6 +142,7 @@ class OrderIngestionResult(BaseModel):
     resolved_customer_id: Optional[uuid.UUID] = None
     resolved_customer_code: Optional[str] = None
     resolved_customer_name: Optional[str] = None
+    customer_po_number: Optional[str] = None
     resolved_items: List[ResolvedOrderItem] = Field(default_factory=list)
     total_amount: Decimal = Decimal("0.00")
     warnings: List[OrderDiscrepancyWarning] = Field(default_factory=list)

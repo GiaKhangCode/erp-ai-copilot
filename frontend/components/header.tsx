@@ -1,16 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Search, Bell, ChevronDown, LogOut, User, Shield, Sparkles } from "lucide-react";
+import { Search, Bell, ChevronDown, LogOut, User, Shield } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { OrderIngestModal } from "@/components/order-ingest-modal";
 import { useToast } from "@/components/toast-provider";
 
 export function Header() {
   const { user, logout, isAdmin, hasPermission } = useAuth();
   const toast = useToast();
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
 
   const getRoleDisplayName = (role?: string) => {
     switch (role) {
@@ -61,17 +59,6 @@ export function Header() {
 
       {/* Right Controls: Notifications & Profile */}
       <div className="flex items-center gap-3 ml-6 shrink-0 relative">
-        {hasPermission("orders:create") && (
-          <button
-            type="button"
-            onClick={() => setIsIngestModalOpen(true)}
-            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-full text-xs font-semibold transition-all shadow-2xs cursor-pointer active:scale-95"
-            title="Bóc tách đơn hàng tự động từ email hoặc tệp tin PDF/EML"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-            <span>Bóc tách đơn AI</span>
-          </button>
-        )}
 
         <a
           href="/approvals"
@@ -160,11 +147,6 @@ export function Header() {
         </div>
       </div>
 
-      {/* Modal Bóc tách đơn hàng AI */}
-      <OrderIngestModal
-        isOpen={isIngestModalOpen}
-        onClose={() => setIsIngestModalOpen(false)}
-      />
     </header>
   );
 }

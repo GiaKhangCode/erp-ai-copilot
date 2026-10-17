@@ -18,13 +18,12 @@ from datetime import datetime, timezone
 # Ensure backend/ directory is in Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")))
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.base import Base
-from app.db.session import engine, async_session_factory
-from app.erp.models import User, Customer, Product, Warehouse, Inventory, SalesOrder, SalesOrderItem
-from app.auth.security import get_password_hash
-import app.rag.models  # noqa: F401
+from sqlalchemy import text  # noqa: E402
+from app.db.base import Base  # noqa: E402
+from app.db.session import async_session_factory, engine  # noqa: E402
+from app.erp.models import Customer, Inventory, Product, SalesOrder, SalesOrderItem, User, Warehouse  # noqa: E402
+from app.auth.security import get_password_hash  # noqa: E402
+import app.rag.models  # noqa: E402, F401
 
 
 async def seed_data():
@@ -63,13 +62,39 @@ async def seed_data():
         await conn.execute(text("ALTER TABLE erp.users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP WITH TIME ZONE;"))
         await conn.execute(text("ALTER TABLE erp.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();"))
 
+        # Ensure newly added columns in customers, products, and audit_logs
+        await conn.execute(text("""
+            ALTER TABLE erp.customers 
+            ADD COLUMN IF NOT EXISTS credit_limit NUMERIC(14, 2) NOT NULL DEFAULT 50000000,
+            ADD COLUMN IF NOT EXISTS current_debt NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS phone VARCHAR(30),
+            ADD COLUMN IF NOT EXISTS address TEXT;
+        """))
+        await conn.execute(text("""
+            ALTER TABLE erp.products 
+            ADD COLUMN IF NOT EXISTS cost_price NUMERIC(14, 2) NOT NULL DEFAULT 0.00;
+        """))
+        await conn.execute(text("""
+            ALTER TABLE erp.audit_logs 
+            ADD COLUMN IF NOT EXISTS actor_email VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS actor_role VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45),
+            ADD COLUMN IF NOT EXISTS details JSONB;
+        """))
+
+        await conn.execute(text("ALTER TABLE erp.sales_orders DROP CONSTRAINT IF EXISTS check_sales_order_status;"))
+        await conn.execute(text("""
+            ALTER TABLE erp.sales_orders 
+            ADD CONSTRAINT check_sales_order_status 
+            CHECK (status IN ('draft', 'pending_approval', 'confirmed', 'cancelled', 'delivered'));
+        """))
 
         await conn.execute(
             text(
                 "TRUNCATE erp.sales_order_items, erp.sales_orders, erp.inventory, "
                 "erp.products, erp.customers, erp.warehouses, erp.user_sessions, "
                 "erp.user_roles, erp.role_permissions, erp.permissions, erp.roles, "
-                "erp.users, erp.idempotency_keys RESTART IDENTITY CASCADE;"
+                "erp.users, erp.idempotency_keys, erp.audit_logs RESTART IDENTITY CASCADE;"
             )
         )
 
@@ -106,6 +131,7 @@ async def seed_data():
             ("users:read", "users", "Xem người dùng", "Xem danh sách nhân sự"),
             ("users:write", "users", "Quản lý người dùng", "Tạo, cập nhật và khóa tài khoản nhân sự"),
             ("roles:manage", "roles", "Quản lý phân quyền", "Tạo vai trò và cấu hình ma trận quyền hạn"),
+            ("audit:read", "audit", "Xem nhật ký kiểm toán", "Truy cập và tra cứu audit log hệ thống"),
         ]
 
         perm_dict = {}
@@ -236,17 +262,17 @@ async def seed_data():
         for u_data in users_seed_data:
             user = User(
                 id=uuid.uuid4(),
-                email=u_data["email"],
-                password_hash=get_password_hash(u_data["password"]),
-                full_name=u_data["full_name"],
-                role=u_data["role_code"],
-                department=u_data["department"],
-                job_title=u_data["job_title"],
+                email=str(u_data["email"]),
+                password_hash=get_password_hash(str(u_data["password"])),
+                full_name=str(u_data["full_name"]),
+                role=str(u_data["role_code"]),
+                department=str(u_data["department"]),
+                job_title=str(u_data["job_title"]),
                 is_active=True,
-                is_superuser=u_data["is_superuser"],
+                is_superuser=bool(u_data.get("is_superuser", False)),
             )
             session.add(user)
-            created_users[u_data["role_code"]] = user
+            created_users[str(u_data["role_code"])] = user
 
         await session.flush()
 
@@ -255,7 +281,6 @@ async def seed_data():
             r = role_dict[role_code]
             session.add(UserRole(user_id=user.id, role_id=r.id))
 
-        admin_user = created_users["admin"]
         sales_user = created_users["sales_rep"]
 
         # 2. Warehouses
@@ -266,22 +291,67 @@ async def seed_data():
 
         # 3. Customers
         customers = [
-            Customer(code="CUS-0001", name="Công ty TNHH Công Nghệ Á Châu", email="contact@asiatech.vn", status="active"),
-            Customer(code="CUS-0002", name="Tập đoàn Bán lẻ Toàn Cầu", email="purchasing@globalretail.com", status="active"),
-            Customer(code="CUS-0003", name="Công ty Cổ phần May Mặc Việt", email="info@vietgarment.vn", status="active"),
-            Customer(code="CUS-0004", name="Công ty TNHH Phân Phối Miền Tây", email="sales@mientaydist.vn", status="active"),
-            Customer(code="CUS-0005", name="Chuỗi Siêu thị Xanh", email="order@greensuper.vn", status="active"),
+            Customer(
+                code="CUS-0001",
+                name="Công ty TNHH Công Nghệ Á Châu",
+                email="contact@asiatech.vn",
+                status="active",
+                credit_limit=Decimal("100000000"),
+                current_debt=Decimal("25000000"),
+                phone="0901234567",
+                address="Tòa nhà FPT, Phố Duy Tân, Cầu Giấy, Hà Nội",
+            ),
+            Customer(
+                code="CUS-0002",
+                name="Tập đoàn Bán lẻ Toàn Cầu",
+                email="purchasing@globalretail.com",
+                status="active",
+                credit_limit=Decimal("50000000"),
+                current_debt=Decimal("42000000"),
+                phone="0987654321",
+                address="Số 10 Mai Chí Thọ, TP. Thủ Đức, TP. Hồ Chí Minh",
+            ),
+            Customer(
+                code="CUS-0003",
+                name="Công ty Cổ phần May Mặc Việt",
+                email="info@vietgarment.vn",
+                status="active",
+                credit_limit=Decimal("30000000"),
+                current_debt=Decimal("5000000"),
+                phone="0912345678",
+                address="KCN Tân Bình, Tân Phú, TP. Hồ Chí Minh",
+            ),
+            Customer(
+                code="CUS-0004",
+                name="Công ty TNHH Phân Phối Miền Tây",
+                email="sales@mientaydist.vn",
+                status="active",
+                credit_limit=Decimal("80000000"),
+                current_debt=Decimal("0"),
+                phone="0939123456",
+                address="Đường 30/4, Ninh Kiều, Cần Thơ",
+            ),
+            Customer(
+                code="CUS-0005",
+                name="Chuỗi Siêu thị Xanh",
+                email="order@greensuper.vn",
+                status="active",
+                credit_limit=Decimal("60000000"),
+                current_debt=Decimal("18000000"),
+                phone="0978999888",
+                address="Trần Hưng Đạo, Hoàn Kiếm, Hà Nội",
+            ),
         ]
         session.add_all(customers)
         await session.flush()
 
-        # 4. Products
+        # 4. Products (kèm cost_price COGS)
         products = [
-            Product(sku="SKU-001", name="Laptop Pro 14-inch M3", unit_price=Decimal("28500000.00"), is_active=True),
-            Product(sku="SKU-002", name="Màn hình Dell UltraSharp 27-inch 4K", unit_price=Decimal("12900000.00"), is_active=True),
-            Product(sku="SKU-003", name="Bàn phím cơ không dây Silent", unit_price=Decimal("2450000.00"), is_active=True),
-            Product(sku="SKU-004", name="Chuột Ergonomic Bluetooth", unit_price=Decimal("1150000.00"), is_active=True),
-            Product(sku="SKU-005", name="Tai nghe chống ồn chủ động ANC", unit_price=Decimal("4600000.00"), is_active=True),
+            Product(sku="SKU-001", name="Laptop Pro 14-inch M3", unit_price=Decimal("28500000.00"), cost_price=Decimal("18525000.00"), is_active=True),
+            Product(sku="SKU-002", name="Màn hình Dell UltraSharp 27-inch 4K", unit_price=Decimal("12900000.00"), cost_price=Decimal("8385000.00"), is_active=True),
+            Product(sku="SKU-003", name="Bàn phím cơ không dây Silent", unit_price=Decimal("2450000.00"), cost_price=Decimal("1470000.00"), is_active=True),
+            Product(sku="SKU-004", name="Chuột Ergonomic Bluetooth", unit_price=Decimal("1150000.00"), cost_price=Decimal("690000.00"), is_active=True),
+            Product(sku="SKU-005", name="Tai nghe chống ồn chủ động ANC", unit_price=Decimal("4600000.00"), cost_price=Decimal("2990000.00"), is_active=True),
         ]
         session.add_all(products)
         await session.flush()

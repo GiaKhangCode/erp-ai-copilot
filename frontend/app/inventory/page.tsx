@@ -21,9 +21,17 @@ import {
   Plus,
   Loader2,
   ArrowRight,
+  ArrowLeftRight,
   Calendar
 } from "lucide-react";
-import { fetchInventory, adjustInventoryApi, fetchStockAdjustmentsApi, InventoryItem, StockAdjustmentItem } from "@/lib/api";
+import { 
+  fetchInventory, 
+  adjustInventoryApi, 
+  fetchStockAdjustmentsApi, 
+  transferInventoryApi,
+  InventoryItem, 
+  StockAdjustmentItem 
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/components/toast-provider";
 
@@ -31,6 +39,7 @@ export default function InventoryPage() {
   const toast = useToast();
   const { hasPermission, isAdmin } = useAuth();
   const canAdjust = isAdmin || hasPermission("inventory:write");
+  const canTransfer = isAdmin || hasPermission("inventory:transfer");
 
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +47,16 @@ export default function InventoryPage() {
   const [selectedWarehouse, setSelectedWarehouse] = useState<string>("all");
   const [stockLevelFilter, setStockLevelFilter] = useState<string>("all");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Transfer Modal State
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [transferSrcWh, setTransferSrcWh] = useState("WH-HN");
+  const [transferTgtWh, setTransferTgtWh] = useState("WH-HCM");
+  const [transferSku, setTransferSku] = useState("");
+  const [transferQuantity, setTransferQuantity] = useState<number>(1);
+  const [transferReason, setTransferReason] = useState("");
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
 
   // Adjustment Modal State
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
@@ -126,6 +145,55 @@ export default function InventoryPage() {
     }
   };
 
+  const openTransferModal = (presetSku?: string, presetWh?: string) => {
+    setTransferSku(presetSku || (inventory[0]?.product_sku || "SKU-001"));
+    setTransferSrcWh(presetWh || "WH-HN");
+    setTransferTgtWh(presetWh === "WH-HCM" ? "WH-HN" : "WH-HCM");
+    setTransferQuantity(1);
+    setTransferReason("");
+    setTransferError(null);
+    setIsTransferModalOpen(true);
+  };
+
+  const handleTransferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTransferError(null);
+
+    if (transferSrcWh === transferTgtWh) {
+      setTransferError("Kho xuất và kho nhập không được trùng nhau.");
+      return;
+    }
+    if (transferQuantity <= 0) {
+      setTransferError("Số lượng điều chuyển phải lớn hơn 0.");
+      return;
+    }
+    if (!transferReason.trim()) {
+      setTransferError("Vui lòng nhập lý do điều chuyển hàng hóa liên kho.");
+      return;
+    }
+
+    setTransferSubmitting(true);
+    try {
+      const res = await transferInventoryApi({
+        source_warehouse_code: transferSrcWh,
+        target_warehouse_code: transferTgtWh,
+        sku: transferSku,
+        quantity: transferQuantity,
+        reason: transferReason.trim(),
+      });
+      toast.success(
+        "Điều chuyển kho thành công!",
+        `Lệnh ${res.transfer_number}: Chuyển ${res.quantity} cái ${res.sku} từ ${res.source_warehouse_name} sang ${res.target_warehouse_name}.`
+      );
+      setIsTransferModalOpen(false);
+      await loadInventory();
+    } catch (err: any) {
+      setTransferError(err.message || "Lỗi khi điều chuyển kho.");
+    } finally {
+      setTransferSubmitting(false);
+    }
+  };
+
   // Danh sách các kho duy nhất
   const uniqueWarehouses = useMemo(() => {
     const map = new Map<string, string>();
@@ -154,6 +222,13 @@ export default function InventoryPage() {
       (it) => it.product_sku === adjustSku && it.warehouse_code === adjustWh
     );
   }, [inventory, adjustSku, adjustWh]);
+
+  // Source item selected in transfer modal for stock calculation
+  const sourceStockInTransferModal = useMemo(() => {
+    return inventory.find(
+      (item) => item.product_sku === transferSku && item.warehouse_code === transferSrcWh
+    );
+  }, [inventory, transferSku, transferSrcWh]);
 
   // Bộ lọc tổng hợp
   const filteredInventory = useMemo(() => {
@@ -244,6 +319,17 @@ export default function InventoryPage() {
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
               <span>Điều chỉnh tồn kho</span>
+            </button>
+          )}
+
+          {canTransfer && (
+            <button
+              type="button"
+              onClick={() => openTransferModal()}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer active:scale-95"
+            >
+              <ArrowLeftRight className="w-3.5 h-3.5" />
+              <span>Điều chuyển kho</span>
             </button>
           )}
 
@@ -482,6 +568,17 @@ export default function InventoryPage() {
                               >
                                 <SlidersHorizontal className="w-3 h-3" />
                                 <span>Kiểm kê</span>
+                              </button>
+                            )}
+                            {canTransfer && (
+                              <button
+                                type="button"
+                                onClick={() => openTransferModal(item.product_sku, item.warehouse_code)}
+                                className="inline-flex items-center gap-1 text-[11px] text-indigo-700 hover:text-indigo-900 hover:bg-indigo-50 px-2 py-1 rounded-lg transition-colors font-semibold"
+                                title="Điều chuyển mặt hàng này sang chi nhánh kho khác"
+                              >
+                                <ArrowLeftRight className="w-3 h-3" />
+                                <span>Chuyển kho</span>
                               </button>
                             )}
                             <Link
@@ -742,6 +839,150 @@ export default function InventoryPage() {
                 Đóng
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ĐIỀU CHUYỂN KHO NỘI BỘ */}
+      {isTransferModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-indigo-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center border border-indigo-200">
+                  <ArrowLeftRight className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Lệnh điều chuyển hàng hóa liên kho</h3>
+                  <p className="text-[11px] text-slate-500">Chuyển tồn kho giữa các chi nhánh (HN ↔ HCM)</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTransferModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleTransferSubmit} className="p-6 space-y-4 text-xs">
+              {transferError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl flex items-start gap-2">
+                  <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{transferError}</span>
+                </div>
+              )}
+
+              {/* Sản phẩm SKU */}
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-700">Mặt hàng điều chuyển (SKU):</label>
+                <select
+                  value={transferSku}
+                  onChange={(e) => setTransferSku(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                >
+                  {uniqueProducts.map((p) => (
+                    <option key={p.sku} value={p.sku}>
+                      {p.sku} - {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Kho xuất & Kho nhập */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">Kho xuất (Nguồn):</label>
+                  <select
+                    value={transferSrcWh}
+                    onChange={(e) => setTransferSrcWh(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  >
+                    {uniqueWarehouses.map((w) => (
+                      <option key={w.code} value={w.code}>
+                        {w.code} - {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-slate-700">Kho nhập (Đích):</label>
+                  <select
+                    value={transferTgtWh}
+                    onChange={(e) => setTransferTgtWh(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                  >
+                    {uniqueWarehouses.map((w) => (
+                      <option key={w.code} value={w.code}>
+                        {w.code} - {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Tình trạng tồn tại kho xuất */}
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
+                <div className="flex items-center justify-between text-[11px] mb-1">
+                  <span className="text-slate-500 font-medium">Tồn khả dụng tại kho xuất [{transferSrcWh}]:</span>
+                  <span className={`font-bold ${
+                    (sourceStockInTransferModal?.quantity_available || 0) > 0 ? "text-emerald-700" : "text-rose-600"
+                  }`}>
+                    {sourceStockInTransferModal?.quantity_available ?? 0} sản phẩm
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  (Tồn thực tế: {sourceStockInTransferModal?.quantity_on_hand ?? 0} | Đang giữ đơn: {sourceStockInTransferModal?.quantity_reserved ?? 0})
+                </div>
+              </div>
+
+              {/* Số lượng */}
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-700">Số lượng điều chuyển:</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={sourceStockInTransferModal?.quantity_available || 9999}
+                  value={transferQuantity}
+                  onChange={(e) => setTransferQuantity(parseInt(e.target.value, 10) || 1)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Lý do */}
+              <div className="space-y-1.5">
+                <label className="font-semibold text-slate-700">Lý do điều chuyển:</label>
+                <textarea
+                  rows={2}
+                  placeholder="Ví dụ: Cân đối nhu cầu chi nhánh miền Nam, kho HCM sắp hết hàng..."
+                  value={transferReason}
+                  onChange={(e) => setTransferReason(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-normal focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Buttons */}
+              <div className="pt-2 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsTransferModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition-colors"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="submit"
+                  disabled={transferSubmitting || (sourceStockInTransferModal?.quantity_available || 0) < transferQuantity}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs shadow-xs transition-all active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {transferSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Xác nhận điều chuyển</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -193,12 +193,21 @@ class QuotationService:
             Paragraph("Email: sales@erpcopilot.vn | Website: erpcopilot.vn", company_info_style),
         ]
 
-        meta_col = [
-            Paragraph(f"<b>Số báo giá:</b> QUO-{order.order_number}", company_info_style),
-            Paragraph(f"<b>Ngày lập:</b> {order.created_at.strftime('%d/%m/%Y')}", company_info_style),
-            Paragraph(f"<b>Hiệu lực:</b> 15 ngày kể từ ngày lập", company_info_style),
-            Paragraph(f"<b>Trạng thái:</b> {order.status.upper()}", company_info_style),
-        ]
+        is_order_confirmation = order.status in ("confirmed", "delivered") or bool(order.customer_po_number)
+
+        meta_col = []
+        if is_order_confirmation:
+            meta_col.append(Paragraph(f"<b>Mã đơn hàng:</b> {order.order_number}", company_info_style))
+            if order.customer_po_number:
+                meta_col.append(Paragraph(f"<b>Số PO đối tác:</b> {order.customer_po_number}", company_info_style))
+            meta_col.append(Paragraph(f"<b>Ngày xác nhận:</b> {order.created_at.strftime('%d/%m/%Y')}", company_info_style))
+            status_vn = "ĐÃ XÁC NHẬN" if order.status == "confirmed" else ("ĐÃ XUẤT KHO" if order.status == "delivered" else order.status.upper())
+            meta_col.append(Paragraph(f"<b>Trạng thái:</b> {status_vn}", company_info_style))
+        else:
+            meta_col.append(Paragraph(f"<b>Số báo giá:</b> QUO-{order.order_number}", company_info_style))
+            meta_col.append(Paragraph(f"<b>Ngày lập:</b> {order.created_at.strftime('%d/%m/%Y')}", company_info_style))
+            meta_col.append(Paragraph(f"<b>Hiệu lực:</b> 15 ngày kể từ ngày lập", company_info_style))
+            meta_col.append(Paragraph(f"<b>Trạng thái:</b> ĐƠN NHÁP (DRAFT)", company_info_style))
 
         header_table = Table(
             [[company_col, meta_col]],
@@ -213,9 +222,13 @@ class QuotationService:
         story.append(Spacer(1, 4 * mm))
         story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2563EB"), spaceAfter=10))
 
-        # 2. Quotation Title
-        story.append(Paragraph("BÁO GIÁ KINH DOANH", title_style))
-        story.append(Paragraph("(Sales Quotation & Proforma Invoice)", subtitle_style))
+        # 2. Document Title
+        if is_order_confirmation:
+            story.append(Paragraph("PHIẾU XÁC NHẬN ĐƠN HÀNG", title_style))
+            story.append(Paragraph("(Order Confirmation & Proforma Invoice)", subtitle_style))
+        else:
+            story.append(Paragraph("BÁO GIÁ KINH DOANH", title_style))
+            story.append(Paragraph("(Sales Quotation)", subtitle_style))
 
         # 3. Customer Info Section
         story.append(Paragraph("I. THÔNG TIN KHÁCH HÀNG & BÊN NHẬN HÀNG", heading_section_style))

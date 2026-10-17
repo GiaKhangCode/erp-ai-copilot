@@ -12,14 +12,24 @@ from app.auth.dependencies import (
 from app.core.errors import AppException
 from app.erp.models import User
 from app.erp.schemas import (
+    CustomerCreate,
+    CustomerUpdate,
     CustomerResponse,
+    ProductCreate,
+    ProductUpdate,
     ProductResponse,
     InventoryResponse,
     OrderDraftCreate,
+    OrderDraftUpdate,
     OrderResponse,
     RevenueReportResponse,
+    SalesLeaderboardResponse,
+    FinancialProfitabilityResponse,
+    DebtAgingReportResponse,
     StockAdjustmentCreate,
     StockAdjustmentResponse,
+    StockTransferCreate,
+    StockTransferResponse,
 )
 from app.erp.services import (
     CustomerService,
@@ -28,12 +38,13 @@ from app.erp.services import (
     SalesOrderService,
     ReportingService,
 )
+from app.erp.services.audit import AuditService
 
 router = APIRouter(tags=["ERP Domain"])
 
 
 # ==========================================
-# Customers Endpoints
+# Customers Endpoints (CRUD)
 # ==========================================
 @router.get("/customers", response_model=List[CustomerResponse])
 async def list_customers(
@@ -57,8 +68,78 @@ async def get_customer(
     return await CustomerService.get_by_code(db, code=code)
 
 
+@router.post("/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
+async def create_customer(
+    payload: CustomerCreate,
+    current_user: User = Depends(require_permission("customers:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Thêm mới đối tác khách hàng. Yêu cầu quyền 'customers:write'."""
+    customer = await CustomerService.create_customer(db, payload)
+    await AuditService.log_activity(
+        session=db,
+        action="CUSTOMER_CREATE",
+        resource_type="customer",
+        resource_id=str(customer.id),
+        actor=current_user,
+        details={
+            "code": customer.code,
+            "name": customer.name,
+            "credit_limit": float(customer.credit_limit or 0),
+        },
+    )
+    await db.commit()
+    return customer
+
+
+@router.put("/customers/{customer_id}", response_model=CustomerResponse)
+async def update_customer(
+    customer_id: uuid.UUID,
+    payload: CustomerUpdate,
+    current_user: User = Depends(require_permission("customers:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cập nhật thông tin đối tác khách hàng. Yêu cầu quyền 'customers:write'."""
+    customer = await CustomerService.update_customer(db, customer_id, payload)
+    await AuditService.log_activity(
+        session=db,
+        action="CUSTOMER_UPDATE",
+        resource_type="customer",
+        resource_id=str(customer.id),
+        actor=current_user,
+        details={
+            "code": customer.code,
+            "name": customer.name,
+            "credit_limit": float(customer.credit_limit or 0),
+            "status": customer.status,
+        },
+    )
+    await db.commit()
+    return customer
+
+
+@router.delete("/customers/{customer_id}", response_model=CustomerResponse)
+async def delete_customer(
+    customer_id: uuid.UUID,
+    current_user: User = Depends(require_permission("customers:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ngừng giao dịch (soft delete) khách hàng. Yêu cầu quyền 'customers:write'."""
+    customer = await CustomerService.delete_customer(db, customer_id)
+    await AuditService.log_activity(
+        session=db,
+        action="CUSTOMER_DEACTIVATE",
+        resource_type="customer",
+        resource_id=str(customer.id),
+        actor=current_user,
+        details={"code": customer.code, "name": customer.name},
+    )
+    await db.commit()
+    return customer
+
+
 # ==========================================
-# Products Endpoints
+# Products Endpoints (CRUD)
 # ==========================================
 @router.get("/products", response_model=List[ProductResponse])
 async def list_products(
@@ -80,6 +161,79 @@ async def get_product(
 ):
     """Tra cứu chi tiết sản phẩm theo mã SKU (ví dụ: SKU-001)."""
     return await ProductService.get_by_sku(db, sku=sku)
+
+
+@router.post("/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
+async def create_product(
+    payload: ProductCreate,
+    current_user: User = Depends(require_permission("products:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Thêm mới sản phẩm vào danh mục. Yêu cầu quyền 'products:write'."""
+    product = await ProductService.create_product(db, payload)
+    await AuditService.log_activity(
+        session=db,
+        action="PRODUCT_CREATE",
+        resource_type="product",
+        resource_id=str(product.id),
+        actor=current_user,
+        details={
+            "sku": product.sku,
+            "name": product.name,
+            "unit_price": float(product.unit_price),
+            "cost_price": float(product.cost_price or 0),
+        },
+    )
+    await db.commit()
+    return product
+
+
+@router.put("/products/{product_id}", response_model=ProductResponse)
+async def update_product(
+    product_id: uuid.UUID,
+    payload: ProductUpdate,
+    current_user: User = Depends(require_permission("products:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cập nhật thông số giá bán, giá vốn và mô tả sản phẩm. Yêu cầu quyền 'products:write'."""
+    product = await ProductService.update_product(db, product_id, payload)
+    await AuditService.log_activity(
+        session=db,
+        action="PRODUCT_UPDATE",
+        resource_type="product",
+        resource_id=str(product.id),
+        actor=current_user,
+        details={
+            "sku": product.sku,
+            "name": product.name,
+            "unit_price": float(product.unit_price),
+            "cost_price": float(product.cost_price or 0),
+            "is_active": product.is_active,
+        },
+    )
+    await db.commit()
+    return product
+
+
+@router.delete("/products/{product_id}", response_model=ProductResponse)
+async def delete_product(
+    product_id: uuid.UUID,
+    current_user: User = Depends(require_permission("products:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ngừng kinh doanh sản phẩm (soft delete). Yêu cầu quyền 'products:write'."""
+    product = await ProductService.delete_product(db, product_id)
+    await AuditService.log_activity(
+        session=db,
+        action="PRODUCT_DEACTIVATE",
+        resource_type="product",
+        resource_id=str(product.id),
+        actor=current_user,
+        details={"sku": product.sku, "name": product.name},
+    )
+    await db.commit()
+    return product
+
 
 
 # ==========================================
@@ -138,6 +292,54 @@ async def list_inventory_adjustments(
         limit=limit,
         offset=offset,
     )
+
+
+@router.post("/inventory/transfers", response_model=StockTransferResponse, status_code=status.HTTP_201_CREATED)
+async def transfer_inventory(
+    payload: StockTransferCreate,
+    current_user: User = Depends(require_permission("inventory:transfer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Thực hiện điều chuyển tồn kho giữa 2 kho nội bộ (ví dụ: WH-HN -> WH-HCM).
+    Yêu cầu quyền 'inventory:transfer'.
+    """
+    actor_role = getattr(current_user, "role", "unknown")
+    if hasattr(current_user, "roles") and current_user.roles:
+        actor_role = current_user.roles[0].code
+
+    return await InventoryService.transfer_inventory(
+        session=db,
+        source_warehouse_code=payload.source_warehouse_code,
+        target_warehouse_code=payload.target_warehouse_code,
+        sku=payload.sku,
+        quantity=payload.quantity,
+        reason=payload.reason,
+        user_id=current_user.id,
+        actor_email=current_user.email,
+        actor_role=actor_role,
+    )
+
+
+@router.get("/inventory/transfers", response_model=List[StockTransferResponse])
+async def list_inventory_transfers(
+    sku: Optional[str] = Query(None, description="Lọc theo mã SKU"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(require_permission("inventory:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Xem lịch sử điều chuyển kho nội bộ.
+    Yêu cầu quyền 'inventory:read'.
+    """
+    return await InventoryService.list_transfers(
+        session=db,
+        sku=sku,
+        limit=limit,
+        offset=offset,
+    )
+
 
 
 # ==========================================
@@ -226,6 +428,54 @@ async def create_sales_order_draft(
     )
 
 
+@router.put(
+    "/sales-orders/{order_id}",
+    response_model=OrderResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Chỉnh sửa đơn hàng nháp (chỉ khi status == 'draft')",
+)
+async def update_sales_order_draft(
+    order_id: uuid.UUID,
+    payload: OrderDraftUpdate,
+    current_user: User = Depends(require_permission("orders:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Chỉnh sửa thông tin đơn hàng nháp:
+    - Yêu cầu quyền 'orders:create' hoặc quản lý/admin.
+    - Cập nhật danh sách mặt hàng, tính lại tổng tiền.
+    """
+    return await SalesOrderService.update_order_draft(
+        db,
+        order_id=order_id,
+        payload=payload,
+        actor_id=current_user.id,
+    )
+
+
+@router.delete(
+    "/sales-orders/{order_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Xóa hẳn đơn hàng nháp khỏi hệ thống (chỉ khi status == 'draft')",
+)
+async def delete_sales_order_draft(
+    order_id: uuid.UUID,
+    current_user: User = Depends(require_permission("orders:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Xóa đơn hàng nháp:
+    - Chỉ được xóa khi đơn chưa phê duyệt (status == 'draft').
+    - Ghi nhận AuditLog ORDER_DELETE.
+    """
+    await SalesOrderService.delete_order_draft(
+        db,
+        order_id=order_id,
+        actor_id=current_user.id,
+    )
+    return {"message": "Đã xóa đơn hàng nháp thành công", "order_id": str(order_id)}
+
+
 # ==========================================
 # Reporting Endpoints (UC-02)
 # ==========================================
@@ -242,4 +492,45 @@ async def get_revenue_report(
     Chỉ dành cho người dùng có quyền 'reports:revenue_view' (admin, director, sales_manager).
     """
     return await ReportingService.get_revenue(db, year=year, month=month, status=status)
+
+
+@router.get("/reporting/sales-leaderboard", response_model=SalesLeaderboardResponse, tags=["Reporting"])
+async def get_sales_leaderboard(
+    year: Optional[int] = Query(None, description="Năm báo cáo (ví dụ: 2026)"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="Tháng báo cáo (1-12)"),
+    current_user: User = Depends(require_permission("reports:revenue_view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Báo cáo Bảng xếp hạng Hiệu suất Nhân viên kinh doanh (Phase 3).
+    Chỉ dành cho người dùng có quyền 'reports:revenue_view' (admin, director, sales_manager).
+    """
+    return await ReportingService.get_sales_leaderboard(db, year=year, month=month)
+
+
+@router.get("/reporting/profitability", response_model=FinancialProfitabilityResponse, tags=["Reporting"])
+async def get_profitability_report(
+    year: Optional[int] = Query(None, description="Năm báo cáo (ví dụ: 2026)"),
+    month: Optional[int] = Query(None, ge=1, le=12, description="Tháng báo cáo (1-12)"),
+    current_user: User = Depends(require_permission("reports:revenue_view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Báo cáo Lợi nhuận gộp & Tỷ suất lợi nhuận (Gross Profit & Margin) (Phase 3).
+    Chỉ dành cho người dùng có quyền 'reports:revenue_view' (admin, director, sales_manager).
+    """
+    return await ReportingService.get_financial_profitability(db, year=year, month=month)
+
+
+@router.get("/reporting/debt-aging", response_model=DebtAgingReportResponse, tags=["Reporting"])
+async def get_debt_aging_report(
+    current_user: User = Depends(require_permission("reports:revenue_view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Báo cáo Tuổi nợ & Phân tích rủi ro tín dụng khách hàng (Debt Aging Analysis) (Phase 3).
+    Chỉ dành cho người dùng có quyền 'reports:revenue_view' (admin, director, sales_manager).
+    """
+    return await ReportingService.get_debt_aging(db)
+
 

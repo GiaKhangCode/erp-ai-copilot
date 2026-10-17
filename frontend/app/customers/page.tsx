@@ -12,10 +12,23 @@ import {
   ShoppingCart, 
   Building2, 
   Mail, 
-  ExternalLink,
-  UserCheck
+  UserCheck,
+  UserPlus,
+  Pencil,
+  Ban,
+  X,
+  CreditCard,
+  Phone,
+  MapPin,
+  Loader2
 } from "lucide-react";
-import { fetchCustomers, CustomerItem } from "@/lib/api";
+import { 
+  fetchCustomers, 
+  CustomerItem, 
+  createCustomerApi, 
+  updateCustomerApi, 
+  deleteCustomerApi 
+} from "@/lib/api";
 import { PermissionGate, AccessDeniedView } from "@/components/permission-gate";
 import { useAuth } from "@/lib/auth-context";
 
@@ -37,12 +50,29 @@ export default function CustomersPage() {
 }
 
 function CustomersContent() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, isAdmin } = useAuth();
+  const canWriteCustomer = isAdmin || hasPermission("customers:write");
+
   const [customers, setCustomers] = useState<CustomerItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // State Modal Thêm / Sửa
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<CustomerItem | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Form Fields
+  const [formCode, setFormCode] = useState("");
+  const [formName, setFormName] = useState("");
+  const [formEmail, setFormEmail] = useState("");
+  const [formPhone, setFormPhone] = useState("");
+  const [formAddress, setFormAddress] = useState("");
+  const [formCreditLimit, setFormCreditLimit] = useState<number>(50000000);
+  const [formStatus, setFormStatus] = useState("active");
 
   const loadCustomers = async () => {
     setLoading(true);
@@ -64,6 +94,89 @@ function CustomersContent() {
   useEffect(() => {
     loadCustomers();
   }, []);
+
+  const openCreateModal = () => {
+    setEditingCustomer(null);
+    setFormCode(`CUS-${String(customers.length + 1).padStart(4, "0")}`);
+    setFormName("");
+    setFormEmail("");
+    setFormPhone("");
+    setFormAddress("");
+    setFormCreditLimit(50000000);
+    setFormStatus("active");
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (cust: CustomerItem) => {
+    setEditingCustomer(cust);
+    setFormCode(cust.code);
+    setFormName(cust.name);
+    setFormEmail(cust.email || "");
+    setFormPhone(cust.phone || "");
+    setFormAddress(cust.address || "");
+    setFormCreditLimit(cust.credit_limit || 50000000);
+    setFormStatus(cust.status || "active");
+    setIsModalOpen(true);
+  };
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formName.trim()) {
+      setErrorMsg("Tên khách hàng không được để trống.");
+      return;
+    }
+    setSubmitting(true);
+    setErrorMsg(null);
+    try {
+      if (editingCustomer) {
+        // Cập nhật
+        await updateCustomerApi(editingCustomer.id, {
+          name: formName.trim(),
+          email: formEmail.trim() || undefined,
+          phone: formPhone.trim() || undefined,
+          address: formAddress.trim() || undefined,
+          credit_limit: Number(formCreditLimit) || 0,
+          status: formStatus,
+        });
+        setSuccessMsg(`Đã cập nhật thông tin khách hàng '${formName}' thành công.`);
+      } else {
+        // Thêm mới
+        await createCustomerApi({
+          code: formCode.trim().toUpperCase(),
+          name: formName.trim(),
+          email: formEmail.trim() || undefined,
+          phone: formPhone.trim() || undefined,
+          address: formAddress.trim() || undefined,
+          credit_limit: Number(formCreditLimit) || 50000000,
+          status: formStatus,
+        });
+        setSuccessMsg(`Đã thêm mới đối tác khách hàng '${formName}' thành công.`);
+      }
+      setIsModalOpen(false);
+      await loadCustomers();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Không thể lưu thông tin khách hàng.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleToggleStatus = async (cust: CustomerItem) => {
+    const newStatus = cust.status === "active" ? "inactive" : "active";
+    const confirmMsg = newStatus === "inactive" 
+      ? `Bạn có chắc chắn muốn tạm dừng giao dịch với đối tác '${cust.name}'?` 
+      : `Kích hoạt lại trạng thái hoạt động cho đối tác '${cust.name}'?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await updateCustomerApi(cust.id, { status: newStatus });
+      setSuccessMsg(`Đã chuyển trạng thái đối tác '${cust.name}' sang ${newStatus === "active" ? "Hoạt động" : "Tạm ngừng"}.`);
+      await loadCustomers();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Không thể thay đổi trạng thái đối tác.");
+    }
+  };
 
   const filteredCustomers = useMemo(() => {
     return customers.filter((c) => {
@@ -100,12 +213,24 @@ function CustomersContent() {
               Quản lý Khách hàng & Đối tác (Customers)
             </h1>
             <p className="text-xs text-slate-500">
-              Danh bạ khách hàng doanh nghiệp, mã đối tác ERP và lịch sử đặt hàng
+              Danh bạ khách hàng doanh nghiệp, hạn mức tín dụng và công nợ bán hàng
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5">
+          {/* Nút thêm khách hàng (RBAC check) */}
+          {canWriteCustomer && (
+            <button
+              type="button"
+              onClick={openCreateModal}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer active:scale-95"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Thêm khách hàng</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={loadCustomers}
@@ -126,7 +251,7 @@ function CustomersContent() {
 
           <Link
             href="/copilot?q=Tổng hợp thông tin doanh số top khách hàng lớn nhất"
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-[#0066FF] hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer active:scale-95"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer active:scale-95"
           >
             <Sparkles className="w-3.5 h-3.5" />
             <span>AI Phân tích khách hàng</span>
@@ -205,15 +330,21 @@ function CustomersContent() {
         </div>
       </div>
 
-      {/* 4. Thông báo lỗi */}
+      {/* Thông báo thông điệp */}
       {errorMsg && (
         <div className="mx-6 mb-3 p-3 rounded-xl bg-rose-50 text-rose-800 text-xs border border-rose-200 flex items-center justify-between">
           <span>{errorMsg}</span>
           <button onClick={() => setErrorMsg(null)} className="text-rose-500 hover:text-rose-700">✕</button>
         </div>
       )}
+      {successMsg && (
+        <div className="mx-6 mb-3 p-3 rounded-xl bg-emerald-50 text-emerald-800 text-xs border border-emerald-200 flex items-center justify-between">
+          <span>{successMsg}</span>
+          <button onClick={() => setSuccessMsg(null)} className="text-emerald-500 hover:text-emerald-700">✕</button>
+        </div>
+      )}
 
-      {/* 5. Bảng danh sách khách hàng */}
+      {/* 4. Bảng danh sách khách hàng */}
       <div className="flex-1 px-6 pb-6 overflow-hidden">
         <div className="h-full bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden flex flex-col">
           <div className="flex-1 overflow-y-auto">
@@ -222,7 +353,8 @@ function CustomersContent() {
                 <tr>
                   <th className="py-3 px-4">Mã đối tác</th>
                   <th className="py-3 px-4">Tên doanh nghiệp / Đối tác</th>
-                  <th className="py-3 px-4">Email liên hệ</th>
+                  <th className="py-3 px-4">Liên hệ & Địa chỉ</th>
+                  <th className="py-3 px-4 text-right">Hạn mức nợ (Limit)</th>
                   <th className="py-3 px-4 text-center">Trạng thái</th>
                   <th className="py-3 px-4 text-center">Thao tác</th>
                 </tr>
@@ -234,80 +366,113 @@ function CustomersContent() {
                       <td className="py-3.5 px-4"><div className="h-4 bg-slate-200 rounded-md w-24" /></td>
                       <td className="py-3.5 px-4"><div className="h-4 bg-slate-200 rounded-md w-48" /></td>
                       <td className="py-3.5 px-4"><div className="h-4 bg-slate-100 rounded-md w-36" /></td>
+                      <td className="py-3.5 px-4 text-right"><div className="h-4 bg-slate-100 rounded-md w-24 ml-auto" /></td>
                       <td className="py-3.5 px-4 text-center"><div className="h-5 bg-slate-100 rounded-full w-20 mx-auto" /></td>
-                      <td className="py-3.5 px-4 text-center"><div className="h-6 bg-slate-100 rounded-lg w-16 mx-auto" /></td>
+                      <td className="py-3.5 px-4 text-center"><div className="h-6 bg-slate-100 rounded-lg w-20 mx-auto" /></td>
                     </tr>
                   ))
                 ) : filteredCustomers.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-12 text-center text-slate-400">
+                    <td colSpan={6} className="py-12 text-center text-slate-400">
                       <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
                         <Users className="w-6 h-6" />
                       </div>
                       <p className="font-medium text-slate-600">Không tìm thấy khách hàng nào</p>
-                      <p className="text-[11px] text-slate-400 mt-1">Vui lòng điều chỉnh lại bộ lọc hoặc từ khóa tìm kiếm</p>
+                      <p className="text-[11px] text-slate-400 mt-1">Vui lòng điều chỉnh lại bộ lọc hoặc tạo đối tác mới</p>
                     </td>
                   </tr>
                 ) : (
-                  filteredCustomers.map((cust) => (
-                    <tr
-                      key={cust.id || cust.code}
-                      className="hover:bg-slate-50/80 transition-colors"
-                    >
-                      <td className="py-3.5 px-4 font-mono font-bold text-sky-700 flex items-center gap-2">
-                        <Building2 className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                        <span>{cust.code}</span>
-                      </td>
-                      <td className="py-3.5 px-4 font-semibold text-slate-800">
-                        {cust.name}
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-500">
-                        {cust.email ? (
-                          <span className="flex items-center gap-1.5 font-normal">
-                            <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span>{cust.email}</span>
-                          </span>
-                        ) : (
-                          <span className="text-slate-400 italic">Chưa cập nhật</span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        {cust.status === "active" ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            Hoạt động
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                            <XCircle className="w-3 h-3 text-slate-400" />
-                            Tạm ngừng
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <Link
-                            href={`/orders`}
-                            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors font-semibold"
-                            title="Xem đơn hàng của khách này"
-                          >
-                            <ShoppingCart className="w-3 h-3" />
-                            <span>Đơn hàng</span>
-                          </Link>
-                          {hasPermission("orders:create") && (
-                            <Link
-                              href={`/copilot?q=Tạo đơn hàng nháp cho khách hàng ${cust.code}`}
-                              className="inline-flex items-center gap-1 text-[11px] text-sky-600 hover:text-sky-800 hover:bg-sky-50 px-2 py-1 rounded-lg transition-colors font-semibold"
-                              title="Tạo đơn hàng nháp bằng AI"
-                            >
-                              <Sparkles className="w-3 h-3" />
-                              <span>Tạo đơn</span>
-                            </Link>
+                  filteredCustomers.map((cust) => {
+                    const limitFmt = Number(cust.credit_limit || 0).toLocaleString("vi-VN") + " đ";
+                    return (
+                      <tr key={cust.id || cust.code} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3.5 px-4 font-mono font-bold text-sky-700 flex items-center gap-2">
+                          <Building2 className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                          <span>{cust.code}</span>
+                        </td>
+                        <td className="py-3.5 px-4 font-semibold text-slate-800">
+                          {cust.name}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-500 space-y-0.5">
+                          {cust.email && (
+                            <div className="flex items-center gap-1.5">
+                              <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{cust.email}</span>
+                            </div>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                          {cust.phone && (
+                            <div className="flex items-center gap-1.5 text-slate-400 text-[11px]">
+                              <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{cust.phone}</span>
+                            </div>
+                          )}
+                          {cust.address && (
+                            <div className="flex items-center gap-1.5 text-slate-400 text-[11px] truncate max-w-xs" title={cust.address}>
+                              <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span className="truncate">{cust.address}</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-semibold text-slate-700">
+                          {limitFmt}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          {cust.status === "active" ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              Hoạt động
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                              <XCircle className="w-3 h-3 text-slate-400" />
+                              Tạm ngừng
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {/* Nút sửa (chỉ hiện khi có quyền customers:write) */}
+                            {canWriteCustomer && (
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(cust)}
+                                className="inline-flex items-center gap-1 text-[11px] text-slate-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-md transition-colors cursor-pointer"
+                                title="Chỉnh sửa thông tin đối tác"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span>Sửa</span>
+                              </button>
+                            )}
+
+                            {/* Nút khóa/mở khóa */}
+                            {canWriteCustomer && (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleStatus(cust)}
+                                className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                                  cust.status === "active"
+                                    ? "text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                                    : "text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                                }`}
+                                title={cust.status === "active" ? "Tạm ngừng đối tác" : "Kích hoạt lại"}
+                              >
+                                <Ban className="w-3 h-3" />
+                                <span>{cust.status === "active" ? "Khóa" : "Mở"}</span>
+                              </button>
+                            )}
+
+                            <Link
+                              href="/orders"
+                              className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded-md transition-colors font-semibold"
+                              title="Xem đơn hàng của khách này"
+                            >
+                              <ShoppingCart className="w-3 h-3" />
+                            </Link>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -315,10 +480,148 @@ function CustomersContent() {
 
           <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between text-xs text-slate-500">
             <span>Hiển thị {filteredCustomers.length} / {customers.length} đối tác doanh nghiệp</span>
-            <span>ERP Customer Relationship Service</span>
+            <span>ERP Customer Master Data Service</span>
           </div>
         </div>
       </div>
+
+      {/* 5. Modal Form Thêm / Chỉnh sửa Khách hàng */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-lg rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+                  {editingCustomer ? <Pencil className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {editingCustomer ? "Chỉnh sửa thông tin đối tác" : "Thêm mới đối tác khách hàng"}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {editingCustomer ? `Mã đối tác: ${editingCustomer.code}` : "Khởi tạo hồ sơ khách hàng mới vào ERP"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleFormSubmit} className="p-6 space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Mã khách hàng *</label>
+                  <input
+                    type="text"
+                    disabled={!!editingCustomer}
+                    value={formCode}
+                    onChange={(e) => setFormCode(e.target.value)}
+                    placeholder="VD: CUS-0010"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 disabled:bg-slate-100"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Trạng thái</label>
+                  <select
+                    value={formStatus}
+                    onChange={(e) => setFormStatus(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                  >
+                    <option value="active">Đang hoạt động</option>
+                    <option value="inactive">Tạm dừng giao dịch</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Tên doanh nghiệp / Đối tác *</label>
+                <input
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="VD: Công ty TNHH Giải Pháp Công Nghệ Alpha"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Email liên hệ</label>
+                  <input
+                    type="email"
+                    value={formEmail}
+                    onChange={(e) => setFormEmail(e.target.value)}
+                    placeholder="contact@alpha.vn"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Số điện thoại</label>
+                  <input
+                    type="text"
+                    value={formPhone}
+                    onChange={(e) => setFormPhone(e.target.value)}
+                    placeholder="0912345678"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Địa chỉ trụ sở / Giao hàng</label>
+                <input
+                  type="text"
+                  value={formAddress}
+                  onChange={(e) => setFormAddress(e.target.value)}
+                  placeholder="Số 10 Mai Dịch, Cầu Giấy, Hà Nội"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Hạn mức tín dụng / Công nợ (VND)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1000000"
+                  value={formCreditLimit}
+                  onChange={(e) => setFormCreditLimit(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                />
+                <p className="text-[10.5px] text-slate-400 mt-1">
+                  Hạn mức cho phép khách nợ tối đa trước khi hệ thống cảnh báo hoặc chặn lên đơn hàng.
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{editingCustomer ? "Lưu thay đổi" : "Tạo khách hàng"}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
