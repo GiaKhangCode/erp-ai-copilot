@@ -88,6 +88,9 @@ class ERPAgentState(TypedDict, total=False):
     # --- Định danh và Ngữ cảnh tin cậy (Injected từ auth context, không tin từ prompt) ---
     user_id: Optional[str]
     user_role: Optional[str]
+    user_name: Optional[str]
+    user_email: Optional[str]
+    user_permissions: Optional[List[str]]
     conversation_id: Optional[str]
     request_id: Optional[str]
 

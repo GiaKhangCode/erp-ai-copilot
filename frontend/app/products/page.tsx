@@ -16,8 +16,10 @@ import {
 } from "lucide-react";
 import { fetchProducts, ProductItem } from "@/lib/api";
 import { formatVND } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 
 export default function ProductsPage() {
+  const { hasPermission } = useAuth();
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -262,14 +264,16 @@ export default function ProductsPage() {
                             <Warehouse className="w-3 h-3" />
                             <span>Tồn kho</span>
                           </Link>
-                          <Link
-                            href={`/copilot?q=Tạo đơn hàng nháp cho 1 sản phẩm ${prod.sku}`}
-                            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors font-semibold"
-                            title="Tạo đơn hàng nhanh với AI"
-                          >
-                            <Sparkles className="w-3 h-3" />
-                            <span>Đặt hàng</span>
-                          </Link>
+                          {hasPermission("orders:create") && (
+                            <Link
+                              href={`/copilot?q=Tạo đơn hàng nháp cho 1 sản phẩm ${prod.sku}`}
+                              className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors font-semibold"
+                              title="Tạo đơn hàng nhanh với AI"
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              <span>Đặt hàng</span>
+                            </Link>
+                          )}
                         </div>
                       </td>
                     </tr>

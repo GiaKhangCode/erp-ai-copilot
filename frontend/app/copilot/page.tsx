@@ -29,6 +29,9 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Download,
+  Package,
+  Truck,
+  Layers,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -58,10 +61,162 @@ import { OrderIngestModal } from "@/components/order-ingest-modal";
 import { RagUploadModal } from "@/components/rag-upload-modal";
 import { useToast } from "@/components/toast-provider";
 
+interface RolePromptSuggestion {
+  icon: string;
+  title: string;
+  prompt: string;
+  borderColor?: string;
+}
+
+const getRolePromptSuggestions = (role?: string): RolePromptSuggestion[] => {
+  switch (role) {
+    case "warehouse_keeper":
+      return [
+        {
+          icon: "📦",
+          title: "Kiểm tra tồn kho SKU-001",
+          prompt: "Kiểm tra tồn kho khả dụng thời gian thực của sản phẩm SKU-001",
+          borderColor: "hover:border-emerald-300",
+        },
+        {
+          icon: "🚚",
+          title: "Đơn hàng cần xuất kho",
+          prompt: "Kiểm tra danh sách đơn hàng đã chốt cần đóng gói và xuất kho",
+          borderColor: "hover:border-amber-300",
+        },
+        {
+          icon: "📑",
+          title: "Hướng dẫn kiểm kê kho",
+          prompt: "Hướng dẫn quy trình lập phiếu kiểm kê điều chỉnh tồn kho",
+          borderColor: "hover:border-amber-300",
+        },
+        {
+          icon: "🏢",
+          title: "Quy định an toàn kho bãi",
+          prompt: "Quy định về bảo quản hàng hóa và an toàn kho bãi nội bộ",
+          borderColor: "hover:border-violet-300",
+        },
+      ];
+
+    case "sales_rep":
+      return [
+        {
+          icon: "📝",
+          title: "Tạo đơn hàng nháp cho CUS-0001",
+          prompt: "Tạo đơn hàng nháp cho khách hàng CUS-0001 gồm 2 cái SKU-001",
+          borderColor: "hover:border-blue-300",
+        },
+        {
+          icon: "📄",
+          title: "Xuất file PDF Báo giá",
+          prompt: "Xuất file PDF Báo giá kinh doanh cho đơn hàng gần nhất",
+          borderColor: "hover:border-blue-300",
+        },
+        {
+          icon: "💳",
+          title: "Thẩm định công nợ CUS-0001",
+          prompt: "Kiểm tra hạn mức công nợ và dư nợ của khách hàng CUS-0001",
+          borderColor: "hover:border-sky-300",
+        },
+        {
+          icon: "📦",
+          title: "Kiểm tra tồn kho SKU-001",
+          prompt: "Kiểm tra số lượng tồn kho khả dụng của sản phẩm SKU-001 để báo khách",
+          borderColor: "hover:border-emerald-300",
+        },
+      ];
+
+    case "sales_manager":
+      return [
+        {
+          icon: "📊",
+          title: "Báo cáo doanh thu năm 2026",
+          prompt: "Báo cáo phân tích doanh thu chi tiết các tháng trong năm 2026",
+          borderColor: "hover:border-blue-300",
+        },
+        {
+          icon: "⏳",
+          title: "Đơn hàng chờ phê duyệt",
+          prompt: "Kiểm tra danh sách các đơn hàng nháp đang chờ phê duyệt",
+          borderColor: "hover:border-amber-300",
+        },
+        {
+          icon: "💳",
+          title: "Đánh giá rủi ro công nợ",
+          prompt: "Thẩm định hạn mức công nợ và các khách hàng có dư nợ cao",
+          borderColor: "hover:border-rose-300",
+        },
+        {
+          icon: "📄",
+          title: "Chính sách chiết khấu & giá",
+          prompt: "Chính sách thanh toán, chiết khấu bán hàng cho khách hàng VIP",
+          borderColor: "hover:border-violet-300",
+        },
+      ];
+
+    case "director":
+      return [
+        {
+          icon: "📈",
+          title: "Tổng quan doanh thu 2026",
+          prompt: "Báo cáo tổng quan doanh thu và phân tích hiệu quả kinh doanh năm 2026",
+          borderColor: "hover:border-blue-300",
+        },
+        {
+          icon: "🔒",
+          title: "Kế hoạch chiến lược mật",
+          prompt: "Tra cứu các văn bản kế hoạch chiến lược và tài liệu mật của ban điều hành",
+          borderColor: "hover:border-violet-300",
+        },
+        {
+          icon: "⚖️",
+          title: "Phê duyệt đơn hàng lớn",
+          prompt: "Kiểm tra danh sách đơn hàng giá trị lớn đang chờ ban giám đốc phê duyệt",
+          borderColor: "hover:border-amber-300",
+        },
+        {
+          icon: "💳",
+          title: "Cảnh báo nợ quá hạn",
+          prompt: "Báo cáo tình hình công nợ khách hàng và các khoản nợ vượt hạn mức tín dụng",
+          borderColor: "hover:border-rose-300",
+        },
+      ];
+
+    case "admin":
+    default:
+      return [
+        {
+          icon: "📊",
+          title: "Doanh thu năm 2026",
+          prompt: "Doanh thu năm 2026 của công ty là bao nhiêu?",
+          borderColor: "hover:border-blue-300",
+        },
+        {
+          icon: "📦",
+          title: "Kiểm tra tồn kho SKU-001",
+          prompt: "Kiểm tra tồn kho sản phẩm SKU-001",
+          borderColor: "hover:border-emerald-300",
+        },
+        {
+          icon: "📝",
+          title: "Tạo đơn hàng nháp mẫu",
+          prompt: "Tạo đơn hàng nháp cho Công ty TNHH ABC gồm 2 SKU-001",
+          borderColor: "hover:border-blue-300",
+        },
+        {
+          icon: "📄",
+          title: "Chính sách bán hàng & chiết khấu",
+          prompt: "Chính sách thanh toán và chiết khấu cho khách hàng",
+          borderColor: "hover:border-violet-300",
+        },
+      ];
+  }
+};
+
 function CopilotDashboardWorkspace() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q");
-  const { user } = useAuth();
+  const { user, hasPermission } = useAuth();
   const toast = useToast();
 
   const [inputQuery, setInputQuery] = useState("");
@@ -266,6 +421,20 @@ function CopilotDashboardWorkspace() {
         });
       }
     }
+  };
+
+  // Điền prompt gợi ý vào ô nhập liệu để người dùng tinh chỉnh trước khi gửi
+  const handleSelectPrompt = (prompt: string) => {
+    setInputQuery(prompt);
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.selectionStart = prompt.length;
+        textareaRef.current.selectionEnd = prompt.length;
+        textareaRef.current.style.height = "auto";
+        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
+      }
+    }, 50);
   };
 
   // Load conversations & documents list
@@ -734,13 +903,15 @@ function CopilotDashboardWorkspace() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Link
-              href="/approvals"
-              className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-xl font-medium transition-colors"
-            >
-              <CheckSquare className="w-3.5 h-3.5" />
-              <span>Hộp thư phê duyệt</span>
-            </Link>
+            {(hasPermission("orders:approve") || hasPermission("orders:create")) && (
+              <Link
+                href="/approvals"
+                className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-xl font-medium transition-colors"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                <span>Hộp thư phê duyệt</span>
+              </Link>
+            )}
 
             {!isRightVisible && (
               <button
@@ -802,48 +973,17 @@ function CopilotDashboardWorkspace() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full pt-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleSendMessage(
-                      "Doanh thu năm 2026 của công ty là bao nhiêu?",
-                    )
-                  }
-                  className="p-3 text-left bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-200 rounded-xl text-xs text-slate-700 transition-all font-medium"
-                >
-                  📊 Doanh thu năm 2026 của công ty
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleSendMessage("Kiểm tra tồn kho sản phẩm SKU-001")
-                  }
-                  className="p-3 text-left bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-200 rounded-xl text-xs text-slate-700 transition-all font-medium"
-                >
-                  📦 Kiểm tra tồn kho SKU-001
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleSendMessage(
-                      "Tạo đơn hàng nháp cho Công ty TNHH ABC gồm 2 SKU-001",
-                    )
-                  }
-                  className="p-3 text-left bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-200 rounded-xl text-xs text-slate-700 transition-all font-medium"
-                >
-                  📝 Tạo đơn hàng nháp cho CUS-0001
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleSendMessage(
-                      "Chính sách thanh toán và chiết khấu cho khách hàng",
-                    )
-                  }
-                  className="p-3 text-left bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-200 rounded-xl text-xs text-slate-700 transition-all font-medium"
-                >
-                  📄 Chính sách bán hàng & chiết khấu
-                </button>
+                {getRolePromptSuggestions(user?.role).map((item, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleSelectPrompt(item.prompt)}
+                    className={`p-3 text-left bg-white hover:bg-slate-50 border border-slate-200/90 ${item.borderColor || "hover:border-blue-300"} rounded-xl text-xs text-slate-700 transition-all font-medium shadow-2xs cursor-pointer flex items-center gap-2.5 active:scale-98`}
+                  >
+                    <span className="text-sm shrink-0">{item.icon}</span>
+                    <span className="truncate">{item.title}</span>
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -1047,70 +1187,134 @@ function CopilotDashboardWorkspace() {
           <div className="border border-blue-200/90 rounded-2xl p-2.5 shadow-sm focus-within:ring-4 focus-within:ring-blue-100 focus-within:border-blue-400 transition-all bg-white">
             {/* Input Row */}
             <div className="flex items-start gap-2.5 px-2 pt-0.5">
-              <button
-                type="button"
-                onClick={() => setIsIngestModalOpen(true)}
-                title="Bóc tách đơn hàng tự động (.eml, .pdf, văn bản)"
-                className="text-blue-600 hover:text-blue-700 p-1 mt-0.5 cursor-pointer shrink-0"
-              >
-                <Paperclip className="w-4 h-4" />
-              </button>
+              {hasPermission("orders:create") && (
+                <button
+                  type="button"
+                  onClick={() => setIsIngestModalOpen(true)}
+                  title="Bóc tách đơn hàng tự động (.eml, .pdf, văn bản)"
+                  className="text-blue-600 hover:text-blue-700 p-1 mt-0.5 cursor-pointer shrink-0"
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
+              )}
               <textarea
                 ref={textareaRef}
                 rows={1}
                 value={inputQuery}
                 onChange={(e) => setInputQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Nhập câu hỏi hoặc dán nội dung đơn hàng... (Shift + Enter để xuống dòng, Enter để gửi)"
+                placeholder="Nhập câu hỏi hoặc yêu cầu nghiệp vụ... (Shift + Enter để xuống dòng, Enter để gửi)"
                 className="w-full bg-transparent text-[13px] text-slate-800 placeholder-slate-400 focus:outline-none resize-none leading-relaxed min-h-[26px] max-h-44 py-1 overflow-y-auto"
               />
             </div>
 
             {/* Bottom Row Shortcuts & Submit */}
             <div className="flex items-center justify-between pt-2.5 border-t border-slate-100/90 mt-2 px-1">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsIngestModalOpen(true)}
-                  className="flex items-center gap-1.5 text-[11.5px] text-blue-700 bg-blue-50/80 hover:bg-blue-100 px-2.5 py-1 rounded-lg transition-colors font-semibold border border-blue-200 cursor-pointer"
-                  title="Document AI: Tự động trích xuất đơn hàng từ email hoặc file PDF/DOCX"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Bóc tách đơn AI</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsRagUploadModalOpen(true)}
-                  className="flex items-center gap-1.5 text-[11.5px] text-slate-600 hover:text-violet-600 hover:bg-violet-50/60 px-2 py-1 rounded-lg transition-colors font-medium border border-transparent hover:border-violet-100 cursor-pointer"
-                  title="Tải văn bản hoặc quy chế vào kho RAG"
-                >
-                  <UploadCloud className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Thêm tài liệu nội bộ</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleSendMessage(
-                      "Báo cáo phân tích doanh thu chi tiết các tháng",
-                    )
-                  }
-                  className="flex items-center gap-1.5 text-[11.5px] text-slate-600 hover:text-blue-600 hover:bg-blue-50/60 px-2 py-1 rounded-lg transition-colors font-medium border border-transparent hover:border-blue-100 cursor-pointer"
-                >
-                  <FileSearch className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Phân tích doanh thu</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleSendMessage(
-                      "Tạo đơn hàng nháp cho khách hàng CUS-0001",
-                    )
-                  }
-                  className="flex items-center gap-1.5 text-[11.5px] text-slate-600 hover:text-blue-600 hover:bg-blue-50/60 px-2 py-1 rounded-lg transition-colors font-medium border border-transparent hover:border-blue-100 cursor-pointer"
-                >
-                  <PlusCircle className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Tạo đơn nháp</span>
-                </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* 1. Bóc tách đơn AI - Chỉ dành cho người có quyền tạo đơn */}
+                {hasPermission("orders:create") && (
+                  <button
+                    type="button"
+                    onClick={() => setIsIngestModalOpen(true)}
+                    className="flex items-center gap-1.5 text-[12px] text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/90 hover:border-blue-400 px-3 py-1.5 rounded-xl transition-all font-medium shadow-2xs cursor-pointer active:scale-95"
+                    title="Document AI: Tự động trích xuất đơn hàng từ email hoặc file PDF/DOCX"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Bóc tách đơn AI</span>
+                  </button>
+                )}
+
+                {/* 2. Thêm tài liệu nội bộ - Chỉ dành cho người có quyền tải tài liệu RAG */}
+                {hasPermission("documents:upload") && (
+                  <button
+                    type="button"
+                    onClick={() => setIsRagUploadModalOpen(true)}
+                    className="flex items-center gap-1.5 text-[12px] text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/90 hover:border-violet-400 px-3 py-1.5 rounded-xl transition-all font-medium shadow-2xs cursor-pointer active:scale-95"
+                    title="Tải văn bản hoặc quy chế vào kho RAG"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5 text-violet-600" />
+                    <span>Thêm tài liệu nội bộ</span>
+                  </button>
+                )}
+
+                {/* 3. Phân tích doanh thu - Chỉ dành cho người có quyền xem báo cáo doanh thu */}
+                {hasPermission("reports:revenue_view") && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleSelectPrompt(
+                        "Báo cáo phân tích doanh thu chi tiết các tháng trong năm 2026",
+                      )
+                    }
+                    className="flex items-center gap-1.5 text-[12px] text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/90 hover:border-blue-400 px-3 py-1.5 rounded-xl transition-all font-medium shadow-2xs cursor-pointer active:scale-95"
+                    title="Xem báo cáo doanh thu tài chính"
+                  >
+                    <FileSearch className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Phân tích doanh thu</span>
+                  </button>
+                )}
+
+                {/* 4. Tạo đơn nháp - Chỉ dành cho người có quyền tạo đơn */}
+                {hasPermission("orders:create") && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleSelectPrompt(
+                        "Tạo đơn hàng nháp cho khách hàng CUS-0001 gồm 2 cái SKU-001",
+                      )
+                    }
+                    className="flex items-center gap-1.5 text-[12px] text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/90 hover:border-blue-400 px-3 py-1.5 rounded-xl transition-all font-medium shadow-2xs cursor-pointer active:scale-95"
+                    title="Đề xuất lập đơn hàng nháp"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Tạo đơn nháp</span>
+                  </button>
+                )}
+
+                {/* 5. Nghiệp vụ Kho: Kiểm tra tồn kho */}
+                {hasPermission("inventory:read") && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleSelectPrompt("Kiểm tra tồn kho thời gian thực sản phẩm SKU-001")
+                    }
+                    className="flex items-center gap-1.5 text-[12px] text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/90 hover:border-emerald-400 px-3 py-1.5 rounded-xl transition-all font-medium shadow-2xs cursor-pointer active:scale-95"
+                    title="Tra cứu nhanh tồn kho và số lượng khả dụng"
+                  >
+                    <Package className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Kiểm tra tồn kho</span>
+                  </button>
+                )}
+
+                {/* 6. Nghiệp vụ Kho: Đơn hàng cần xuất kho */}
+                {hasPermission("inventory:write") && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleSelectPrompt("Kiểm tra danh sách đơn hàng đã chốt cần đóng gói và xuất kho")
+                    }
+                    className="flex items-center gap-1.5 text-[12px] text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/90 hover:border-amber-400 px-3 py-1.5 rounded-xl transition-all font-medium shadow-2xs cursor-pointer active:scale-95"
+                    title="Theo dõi các đơn hàng chờ đóng gói và xuất kho"
+                  >
+                    <Truck className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Đơn cần xuất kho</span>
+                  </button>
+                )}
+
+                {/* 7. Nghiệp vụ Kho: Kiểm kê cân đối kho */}
+                {hasPermission("inventory:write") && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleSelectPrompt("Hướng dẫn quy trình lập phiếu kiểm kê điều chỉnh tồn kho")
+                    }
+                    className="flex items-center gap-1.5 text-[12px] text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/90 hover:border-amber-400 px-3 py-1.5 rounded-xl transition-all font-medium shadow-2xs cursor-pointer active:scale-95"
+                    title="Lập phiếu kiểm kê tồn kho"
+                  >
+                    <Layers className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Kiểm kê kho</span>
+                  </button>
+                )}
               </div>
 
               <button

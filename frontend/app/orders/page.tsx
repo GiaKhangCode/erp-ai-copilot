@@ -252,13 +252,15 @@ export default function OrdersPage() {
             <span>Đơn chờ duyệt</span>
           </Link>
 
-          <Link
-            href="/copilot"
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-[#0066FF] hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer active:scale-95"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Tạo đơn bằng AI</span>
-          </Link>
+          {hasPermission("orders:create") && (
+            <Link
+              href="/copilot"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-[#0066FF] hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer active:scale-95"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Tạo đơn bằng AI</span>
+            </Link>
+          )}
         </div>
       </div>
 

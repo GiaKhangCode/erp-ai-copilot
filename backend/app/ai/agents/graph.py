@@ -94,6 +94,9 @@ async def super_agent_node(state: ERPAgentState) -> Dict[str, Any]:
     set_current_user_context(UserContext(
         user_id=state.get("user_id"),
         user_role=state.get("user_role"),
+        user_name=state.get("user_name"),
+        user_email=state.get("user_email"),
+        user_permissions=state.get("user_permissions"),
     ))
 
     system_msg = SystemMessage(content=SUPER_AGENT_SYSTEM_PROMPT)
@@ -403,9 +406,35 @@ async def draft_order_agent_node(state: ERPAgentState) -> Dict[str, Any]:
     from app.erp.models import Product
     from sqlalchemy import select
 
+    user_role = state.get("user_role")
+    user_perms = state.get("user_permissions")
+    
+    is_denied = False
+    if user_role == "warehouse_keeper":
+        is_denied = True
+    elif user_perms is not None:
+        is_denied = "*" not in user_perms and "orders:create" not in user_perms
+    elif user_role is not None:
+        is_denied = user_role not in ["admin", "sales_manager", "sales_rep"]
+
+    if is_denied:
+        err_msg = "⛔ **Truy cập bị từ chối:** Bạn đang đăng nhập với vai trò **Thủ kho** (hoặc chưa được phân quyền `orders:create`). Vai trò này chỉ quản lý tồn kho và xác nhận xuất hàng, không có thẩm quyền khởi tạo đơn hàng nháp. Vui lòng liên hệ Trưởng phòng kinh doanh hoặc Quản trị viên."
+        return {
+            "answer": err_msg,
+            "tool_results": [{
+                "success": False,
+                "error": "PERMISSION_DENIED",
+                "message": err_msg,
+            }],
+            "proposed_action": None,
+        }
+
     set_current_user_context(UserContext(
         user_id=state.get("user_id"),
         user_role=state.get("user_role"),
+        user_name=state.get("user_name"),
+        user_email=state.get("user_email"),
+        user_permissions=state.get("user_permissions"),
     ))
 
     entities = state.get("entities") or state.get("extracted_entities")
@@ -518,7 +547,7 @@ async def draft_order_agent_node(state: ERPAgentState) -> Dict[str, Any]:
             if raw_customer:
                 reason_parts.append(f"Không tìm thấy khách hàng **'{raw_customer}'** trong hệ thống ERP")
             else:
-                reason_parts.append("Chưa cung cấp thông tin hoặc tên khách hàng")
+                reason_parts.append("Chưa cung cấp thông tin hoặc tên/mã khách hàng")
         if not resolved_items:
             if raw_items:
                 unmatched = ", ".join([str(it.get("sku")) for it in raw_items])

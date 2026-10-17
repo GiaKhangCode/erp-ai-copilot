@@ -29,11 +29,19 @@ def set_current_user_context(
     user_role: Optional[str] = None,
     user_name: Optional[str] = None,
     user_id: Optional[Any] = None,
+    user_email: Optional[str] = None,
+    user_permissions: Optional[list] = None,
 ):
     if isinstance(user_context_or_id, UserContext):
         current_user_context.set(user_context_or_id)
     else:
         uid = user_id if user_id is not None else user_context_or_id
         current_user_context.set(
-            UserContext(user_id=uid, user_role=user_role, user_name=user_name)
+            UserContext(
+                user_id=uid,
+                user_role=user_role,
+                user_name=user_name,
+                user_email=user_email,
+                user_permissions=user_permissions,
+            )
         )

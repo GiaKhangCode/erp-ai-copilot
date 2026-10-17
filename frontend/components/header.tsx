@@ -61,15 +61,17 @@ export function Header() {
 
       {/* Right Controls: Notifications & Profile */}
       <div className="flex items-center gap-3 ml-6 shrink-0 relative">
-        <button
-          type="button"
-          onClick={() => setIsIngestModalOpen(true)}
-          className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-full text-xs font-semibold transition-all shadow-2xs cursor-pointer active:scale-95"
-          title="Bóc tách đơn hàng tự động từ email hoặc tệp tin PDF/EML"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-          <span>Bóc tách đơn AI</span>
-        </button>
+        {hasPermission("orders:create") && (
+          <button
+            type="button"
+            onClick={() => setIsIngestModalOpen(true)}
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-full text-xs font-semibold transition-all shadow-2xs cursor-pointer active:scale-95"
+            title="Bóc tách đơn hàng tự động từ email hoặc tệp tin PDF/EML"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+            <span>Bóc tách đơn AI</span>
+          </button>
+        )}
 
         <a
           href="/approvals"

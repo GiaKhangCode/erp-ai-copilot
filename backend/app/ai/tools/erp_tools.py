@@ -330,7 +330,13 @@ async def get_revenue_report(
         month: Tháng cần báo cáo (1 đến 12). Tùy chọn.
     """
     user_ctx = get_current_user_context()
-    if user_ctx.user_role not in ["admin", "sales_manager", "director"]:
+    can_view_revenue = False
+    if user_ctx.user_permissions:
+        can_view_revenue = "*" in user_ctx.user_permissions or "reports:revenue_view" in user_ctx.user_permissions
+    elif user_ctx.user_role in ["admin", "sales_manager", "director"]:
+        can_view_revenue = True
+
+    if not can_view_revenue or user_ctx.user_role in ["warehouse_keeper", "sales_rep"]:
         return json.dumps({
             "error": "PERMISSION_DENIED",
             "message": f"Truy cập bị từ chối: Báo cáo doanh thu chỉ dành cho Quản trị viên, Giám đốc hoặc Quản lý bán hàng. Vai trò hiện tại '{user_ctx.user_role}' không có quyền truy xuất số liệu này.",
@@ -375,6 +381,22 @@ async def propose_sales_order_draft(
         customer_code: Mã khách hàng (Ví dụ: 'CUS-0001') HOẶC Tên công ty / Tên khách hàng (Ví dụ: 'Công ty Á Châu', 'Tập đoàn Bán lẻ Toàn Cầu').
         items: Danh sách sản phẩm và số lượng đặt hàng, ví dụ: [{'sku': 'SKU-001', 'quantity': 2}] hoặc [{'sku': 'Chuột Ergonomic', 'quantity': 2}].
     """
+    user_ctx = get_current_user_context()
+    is_denied = False
+    if user_ctx.user_role == "warehouse_keeper":
+        is_denied = True
+    elif user_ctx.user_permissions is not None:
+        is_denied = "*" not in user_ctx.user_permissions and "orders:create" not in user_ctx.user_permissions
+    elif user_ctx.user_role is not None:
+        is_denied = user_ctx.user_role not in ["admin", "sales_manager", "sales_rep"]
+
+    if is_denied:
+        return json.dumps({
+            "success": False,
+            "error": "PERMISSION_DENIED",
+            "message": f"Truy cập bị từ chối: Tài khoản '{user_ctx.user_name or user_ctx.user_email or 'hiện tại'}' với vai trò '{user_ctx.user_role or 'thủ kho'}' không có quyền lập đơn hàng (yêu cầu quyền 'orders:create'). Vui lòng liên hệ bộ phận Kinh doanh hoặc Quản trị viên hệ thống.",
+        }, ensure_ascii=False)
+
     clean_code = customer_code.strip()
     if not items:
         return json.dumps({
@@ -636,6 +658,12 @@ async def generate_sales_quotation(order_identifier: str) -> str:
         order_identifier: Mã số đơn hàng (Ví dụ: 'SO-2026-001', 'SO-20260315-A1B2') HOẶC ID (UUID) của đơn hàng cần xuất báo giá.
     """
     user_ctx = get_current_user_context()
+    if user_ctx.user_role == "warehouse_keeper":
+        return json.dumps({
+            "error": "PERMISSION_DENIED",
+            "message": "Truy cập bị từ chối: Báo giá kinh doanh chỉ dành cho nhân viên kinh doanh hoặc ban giám đốc. Thủ kho không có thẩm quyền tạo hoặc xuất báo giá.",
+        }, ensure_ascii=False)
+
     if user_ctx.user_permissions and "*" not in user_ctx.user_permissions and "orders:read" not in user_ctx.user_permissions:
         return json.dumps({
             "error": "PERMISSION_DENIED",
@@ -715,6 +743,11 @@ async def check_customer_credit(
         additional_amount: Số tiền dự kiến lên đơn thêm (VND) để tính toán khả năng tài chính sau đơn hàng mới. Mặc định là 0.
     """
     user_ctx = get_current_user_context()
+    if user_ctx.user_role == "warehouse_keeper":
+        return json.dumps({
+            "error": "PERMISSION_DENIED",
+            "message": "Truy cập bị từ chối: Thẩm định công nợ khách hàng chỉ dành cho bộ phận kinh doanh và ban quản lý. Thủ kho không có quyền truy xuất dữ liệu tín dụng này.",
+        }, ensure_ascii=False)
     async with async_session_factory() as session:
         try:
             from decimal import Decimal

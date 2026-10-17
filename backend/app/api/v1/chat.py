@@ -11,7 +11,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_current_user_permissions
 from app.db.session import get_db, async_session_factory
 from app.erp.models import User
 from app.rag.models import Conversation, Message
@@ -53,6 +53,7 @@ router = APIRouter(tags=["AI Chat & Conversations"])
 async def chat_with_agent(
     request: ChatRequest,
     current_user: User = Depends(get_current_user),
+    user_permissions: set[str] = Depends(get_current_user_permissions),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -107,10 +108,22 @@ async def chat_with_agent(
     await db.commit()
 
     # 3. Chuẩn bị initial state cho LangGraph
-    # Nạp danh tính tin cậy từ JWT
+    # Nạp danh tính tin cậy và quyền từ JWT
+    user_perms_list = list(user_permissions)
+    set_current_user_context(UserContext(
+        user_id=str(current_user.id),
+        user_role=str(current_user.role),
+        user_name=str(current_user.full_name or current_user.email),
+        user_email=str(current_user.email),
+        user_permissions=user_perms_list,
+    ))
+
     initial_state = {
         "user_id": str(current_user.id),
         "user_role": str(current_user.role),
+        "user_name": str(current_user.full_name or current_user.email),
+        "user_email": str(current_user.email),
+        "user_permissions": user_perms_list,
         "conversation_id": thread_id,
         "request_id": str(uuid.uuid4()),
         "user_query": clean_message,
@@ -207,6 +220,7 @@ async def chat_with_agent(
 async def chat_with_agent_stream(
     request: ChatRequest,
     current_user: User = Depends(get_current_user),
+    user_permissions: set[str] = Depends(get_current_user_permissions),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -259,6 +273,8 @@ async def chat_with_agent_stream(
     db.add(user_msg_record)
     await db.commit()
 
+    user_perms_list = list(user_permissions)
+
     async def event_stream_generator():
         # Event 1: Bắt đầu luồng
         yield f"data: {json.dumps({'type': 'start', 'conversation_id': str(conv_id)})}\n\n"
@@ -267,6 +283,9 @@ async def chat_with_agent_stream(
         set_current_user_context(UserContext(
             user_id=str(current_user.id),
             user_role=str(current_user.role),
+            user_name=str(current_user.full_name or current_user.email),
+            user_email=str(current_user.email),
+            user_permissions=user_perms_list,
         ))
 
         thought_steps = []
@@ -300,6 +319,9 @@ async def chat_with_agent_stream(
         state = {
             "user_id": str(current_user.id),
             "user_role": str(current_user.role),
+            "user_name": str(current_user.full_name or current_user.email),
+            "user_email": str(current_user.email),
+            "user_permissions": user_perms_list,
             "conversation_id": thread_id,
             "request_id": str(uuid.uuid4()),
             "user_query": clean_message,

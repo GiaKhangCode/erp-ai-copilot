@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { fetchCustomers, CustomerItem } from "@/lib/api";
 import { PermissionGate, AccessDeniedView } from "@/components/permission-gate";
+import { useAuth } from "@/lib/auth-context";
 
 export default function CustomersPage() {
   return (
@@ -36,6 +37,7 @@ export default function CustomersPage() {
 }
 
 function CustomersContent() {
+  const { hasPermission } = useAuth();
   const [customers, setCustomers] = useState<CustomerItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -292,14 +294,16 @@ function CustomersContent() {
                             <ShoppingCart className="w-3 h-3" />
                             <span>Đơn hàng</span>
                           </Link>
-                          <Link
-                            href={`/copilot?q=Tạo đơn hàng nháp cho khách hàng ${cust.code}`}
-                            className="inline-flex items-center gap-1 text-[11px] text-sky-600 hover:text-sky-800 hover:bg-sky-50 px-2 py-1 rounded-lg transition-colors font-semibold"
-                            title="Tạo đơn hàng nháp bằng AI"
-                          >
-                            <Sparkles className="w-3 h-3" />
-                            <span>Tạo đơn</span>
-                          </Link>
+                          {hasPermission("orders:create") && (
+                            <Link
+                              href={`/copilot?q=Tạo đơn hàng nháp cho khách hàng ${cust.code}`}
+                              className="inline-flex items-center gap-1 text-[11px] text-sky-600 hover:text-sky-800 hover:bg-sky-50 px-2 py-1 rounded-lg transition-colors font-semibold"
+                              title="Tạo đơn hàng nháp bằng AI"
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              <span>Tạo đơn</span>
+                            </Link>
+                          )}
                         </div>
                       </td>
                     </tr>

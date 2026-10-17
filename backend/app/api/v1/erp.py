@@ -158,7 +158,12 @@ async def list_sales_orders(
     Tự động áp dụng Data Scoping:
     - Nếu không có quyền 'orders:read_all', nhân viên (sales_rep) chỉ xem được đơn hàng do chính mình tạo.
     """
-    has_read_all = "*" in user_permissions or "orders:read_all" in user_permissions
+    has_read_all = (
+        "*" in user_permissions
+        or "orders:read_all" in user_permissions
+        or "inventory:write" in user_permissions
+        or current_user.role in ["admin", "director", "sales_manager", "warehouse_keeper"]
+    )
     created_by_filter = None if has_read_all else current_user.id
 
     return await SalesOrderService.list_orders(
@@ -183,7 +188,12 @@ async def get_sales_order(
     Áp dụng Object-Level Authorization: Chặn nhân viên xem đơn hàng của đồng nghiệp nếu không có quyền 'orders:read_all'.
     """
     order = await SalesOrderService.get_order_by_id(db, order_id=order_id)
-    has_read_all = "*" in user_permissions or "orders:read_all" in user_permissions
+    has_read_all = (
+        "*" in user_permissions
+        or "orders:read_all" in user_permissions
+        or "inventory:write" in user_permissions
+        or current_user.role in ["admin", "director", "sales_manager", "warehouse_keeper"]
+    )
     if not has_read_all and order.created_by != current_user.id:
         raise AppException(
             status_code=status.HTTP_403_FORBIDDEN,
